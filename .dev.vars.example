@@ -1,0 +1,6 @@
+# Kopier denne filen til .dev.vars for lokal testing med «npm run dev».
+# .dev.vars er i .gitignore og havner aldri i repoet.
+TTN_API_KEY=lokal-test-ikke-ekte
+WEBHOOK_SECRET=lokal-webhook-hemmelighet
+APP_TOKEN=lokal-app-token
+ALLOWED_ORIGIN=http://localhost:8080

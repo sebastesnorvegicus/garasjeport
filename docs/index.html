@@ -1,0 +1,62 @@
+<!doctype html>
+<html lang="no">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#1f2933">
+  <title>Garasjeport</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <main>
+    <header>
+      <h1>Garasjeport</h1>
+      <button id="settings-btn" class="link" type="button">Innstillinger</button>
+    </header>
+
+    <p class="banner">
+      Fotocelle er ikke montert. Se alltid etter at porten har fri bane før du åpner eller lukker.
+    </p>
+
+    <section id="login" hidden>
+      <h2>Tilgangstoken</h2>
+      <p>Lim inn tilgangstokenet (APP_TOKEN). Det lagres bare i denne nettleseren.</p>
+      <form id="login-form">
+        <input id="token-input" type="password" autocomplete="current-password" placeholder="Tilgangstoken" required>
+        <button type="submit" class="primary">Lagre</button>
+      </form>
+      <p id="login-error" class="error" hidden></p>
+    </section>
+
+    <section id="app" hidden>
+      <div id="status-card" class="card status-unknown">
+        <div id="status-label" class="status-label">Laster …</div>
+        <div id="status-time" class="muted"></div>
+      </div>
+
+      <p id="notice" class="notice" hidden></p>
+
+      <div class="actions">
+        <button id="open-btn" class="primary big" type="button" disabled>Åpne</button>
+        <button id="close-btn" class="primary big" type="button" disabled>Lukk</button>
+      </div>
+      <button id="pulse-btn" class="danger" type="button" hidden>Send manuell puls …</button>
+
+      <p id="message" class="error" hidden></p>
+
+      <dl class="details">
+        <dt>Sensorer</dt><dd id="sensors">–</dd>
+        <dt>Signal</dt><dd id="signal">–</dd>
+        <dt>Relépulser i dag</dt><dd id="budget">–</dd>
+        <dt>Downlinks i dag (inkl. ACK)</dt><dd id="downlinks">–</dd>
+      </dl>
+
+      <h2>Historikk</h2>
+      <ol id="history" class="history"></ol>
+    </section>
+  </main>
+
+  <script src="config.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>

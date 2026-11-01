@@ -1,0 +1,31 @@
+name = "garasjeport"
+main = "src/index.js"
+compatibility_date = "2025-10-01"
+
+# Fyll inn id-en du får fra: npx wrangler kv namespace create GARAGE
+[[kv_namespaces]]
+binding = "GARAGE"
+id = "ea5d418f336746209e65482f5ddbcf46"
+
+[vars]
+# GitHub Pages-adressen din (uten sti og uten / til slutt). Flere kan skilles med komma.
+ALLOWED_ORIGIN = "https://sebastesnorvegicus.github.io"
+
+TTN_BASE_URL = "https://eu1.cloud.thethings.network"
+TTN_APP_ID = "garasjeport-hellargata"
+TTN_DEVICE_ID = "garasjeport-node"
+TTN_WEBHOOK_ID = "cf-worker"
+
+# Hvilken inngang er «port lukket»-bryteren? DI1 eller DI2. Den andre blir «port åpen».
+CLOSED_SENSOR = "DI1"
+
+# Relépuls på RO1: 05 01 10 03 E8 = 1 s.  0,5 s: BQEQAfQ=   2 s: BQEQB9A=
+PULSE_PAYLOAD = "BQEQA+g="
+
+STALE_MINUTES = "30"
+# Maks relépulser per døgn (norsk tid). Bekreftelser (ACK) fra TTN telles ikke her.
+PULSE_DAILY_LIMIT = "20"
+PULSE_MIN_INTERVAL_SECONDS = "15"
+
+# Hemmeligheter settes med «npx wrangler secret put <NAVN>», aldri her:
+#   TTN_API_KEY, WEBHOOK_SECRET, APP_TOKEN
