@@ -17,7 +17,7 @@ TTN_DEVICE_ID = "garasjeport-node"
 TTN_WEBHOOK_ID = "cf-worker"
 
 # Hvilken inngang er «port lukket»-bryteren? DI1 eller DI2. Den andre blir «port åpen».
-CLOSED_SENSOR = "DI1"
+CLOSED_SENSOR = "DI2"
 
 # Relépuls på RO1: 05 01 10 03 E8 = 1 s.  0,5 s: BQEQAfQ=   2 s: BQEQB9A=
 PULSE_PAYLOAD = "BQEQA+g="
