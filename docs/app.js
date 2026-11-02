@@ -127,6 +127,7 @@
   function renderHistory(items) {
     const list = $("history");
     list.replaceChildren();
+    items = items.filter((h) => h.type !== "trigger");
     if (!items.length) {
       const li = document.createElement("li");
       li.textContent = "Ingen hendelser ennå.";

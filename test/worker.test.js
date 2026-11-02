@@ -299,5 +299,9 @@ test("status, trigger and history are visible immediately after the uplink", asy
   assert.equal(s.status, "moving");
   assert.ok(s.lastTriggerAt);
   const { history } = await (await worker.fetch(api("/api/history"), env)).json();
-  assert.deepEqual(history.map((h) => h.status), ["moving", "closed"]);
+  assert.deepEqual(history.map((h) => h.type === "trigger" ? "trigger" : h.status), ["moving", "trigger", "closed"]);
+  const trig = history[1];
+  assert.equal(trig.confirmed, true);
+  assert.equal(trig.DI1_flag, "True");
+  assert.equal(trig.rssi, -82);
 });

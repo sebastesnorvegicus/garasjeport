@@ -1,6 +1,6 @@
 import { checkCommand, computeStatus, osloDate, pendingCommand, readConfig } from "./logic.js";
 
-const HISTORY_MAX = 100;
+const HISTORY_MAX = 300;
 const KV_KEYS = ["state", "lastTrigger", "lastCommand", "history"];
 
 // One instance (idFromName("garage")) holds all state. A Durable Object handles
@@ -49,6 +49,16 @@ export class GarageState {
 
     if (up.kind === "trigger") {
       await this.storage.put("lastTrigger", { receivedAt: up.receivedAt });
+      // Logged for timing analysis (trigger → status). The app hides these entries.
+      await this.appendHistory({
+        t: up.receivedAt,
+        type: "trigger",
+        confirmed: up.confirmed,
+        fCnt: up.fCnt,
+        rssi: up.rssi,
+        snr: up.snr,
+        ...up.raw,
+      });
       return reply({ result: "ok" });
     }
 

@@ -56,7 +56,12 @@ export function parseUplink(body, deviceId) {
   if (p.Work_mode === "2ACI+2AVI" && isLevel(p.DI1_status) && isLevel(p.DI2_status)) {
     return { kind: "status", ...base, di1: p.DI1_status, di2: p.DI2_status };
   }
-  if (p.Work_mode === "Exit mode") return { kind: "trigger", ...base };
+  if (p.Work_mode === "Exit mode") {
+    // Raw fields are kept for logging only, to judge later whether they could drive status.
+    const raw = {};
+    for (const k of ["DI1_status", "DI2_status", "DI1_flag", "DI2_flag"]) if (k in p) raw[k] = p[k];
+    return { kind: "trigger", ...base, raw };
+  }
   return { kind: "ignore" };
 }
 
