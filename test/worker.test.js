@@ -1,6 +1,6 @@
 import { test, beforeEach, afterEach } from "node:test";
 import assert from "node:assert/strict";
-import worker from "../src/index.js";
+import worker, { GarageState } from "../src/index.js";
 
 function fakeKV() {
   const store = new Map();
@@ -14,6 +14,43 @@ function fakeKV() {
     async put(key, value) {
       store.set(key, value);
     },
+  };
+}
+
+// Mimics Durable Object storage: values are structured-cloned, get() accepts a key or an array of keys.
+function fakeStorage() {
+  const map = new Map();
+  return {
+    map,
+    async get(key) {
+      if (Array.isArray(key)) return new Map(key.filter((k) => map.has(k)).map((k) => [k, structuredClone(map.get(k))]));
+      return map.has(key) ? structuredClone(map.get(key)) : undefined;
+    },
+    async put(key, value) {
+      if (typeof key === "object") for (const [k, v] of Object.entries(key)) map.set(k, structuredClone(v));
+      else map.set(key, structuredClone(value));
+    },
+  };
+}
+
+// One GarageState instance per test, created on first use like the real runtime.
+function fakeNamespace(getEnv) {
+  const storage = fakeStorage();
+  let instance;
+  let ready;
+  return {
+    storage,
+    idFromName: (name) => name,
+    get: () => ({
+      async fetch(url, init) {
+        if (!instance) {
+          const state = { storage, blockConcurrencyWhile: (fn) => (ready = fn()) };
+          instance = new GarageState(state, getEnv());
+        }
+        await ready;
+        return instance.fetch(new Request(url, init));
+      },
+    }),
   };
 }
 
@@ -35,6 +72,7 @@ beforeEach(() => {
     WEBHOOK_SECRET: "hook-secret",
     APP_TOKEN: "app-token",
   };
+  env.GARAGE_DO = fakeNamespace(() => env);
   downlinkCalls = [];
   globalThis.fetch = async (url, init) => {
     downlinkCalls.push({ url, init });
@@ -79,7 +117,7 @@ function api(path, { method = "GET", body, token = "app-token", origin = "https:
 test("webhook rejects wrong secret", async () => {
   const res = await worker.fetch(uplinkRequest(statusPacket("L", "H"), { secret: "nope" }), env);
   assert.equal(res.status, 401);
-  assert.equal(env.GARAGE.store.size, 0);
+  assert.equal(env.GARAGE_DO.storage.map.size, 0);
 });
 
 test("webhook rejects everything when WEBHOOK_SECRET is not configured", async () => {
@@ -204,11 +242,62 @@ test("many confirmed-uplink ACKs do not block commands; 20 pulses do", async () 
   }
   assert.equal((await worker.fetch(api("/api/command", { method: "POST", body: { action: "pulse" } }), env)).status, 200);
 
-  const today = [...env.GARAGE.store.keys()].find((k) => k.startsWith("pulses:"));
-  env.GARAGE.store.set(today, "20");
-  env.GARAGE.store.delete("lastCommand");
+  const { map } = env.GARAGE_DO.storage;
+  map.set("counters", { ...map.get("counters"), pulses: 20 });
+  map.delete("lastCommand");
   const res = await worker.fetch(api("/api/command", { method: "POST", body: { action: "pulse" } }), env);
   assert.equal(res.status, 429);
   assert.equal((await res.json()).code, "budget");
   assert.equal(downlinkCalls.length, 1);
+});
+
+test("existing KV data is copied into the Durable Object on first use", async () => {
+  const now = Date.now();
+  const today = new Intl.DateTimeFormat("sv-SE", { timeZone: "Europe/Oslo" }).format(new Date(now));
+  const kv = env.GARAGE.store;
+  kv.set("state", JSON.stringify({ di1: "L", di2: "H", statusAt: new Date(now - 60_000).toISOString(), rssi: -99, snr: 5 }));
+  kv.set("history", JSON.stringify([{ t: "2026-11-01T10:00:00Z", type: "status", status: "closed", di1: "L", di2: "H" }]));
+  kv.set(`downlinks:${today}`, "7");
+  kv.set(`pulses:${today}`, "3");
+
+  const s = await (await worker.fetch(api("/api/status"), env)).json();
+  assert.equal(s.status, "closed");
+  assert.equal(s.rssi, -99);
+  assert.equal(s.downlinksToday, 7);
+  assert.equal(s.pulsesToday, 3);
+  const { history } = await (await worker.fetch(api("/api/history"), env)).json();
+  assert.equal(history.length, 1);
+
+  // KV is not read again after migration.
+  kv.set("state", JSON.stringify({ di1: "H", di2: "L", statusAt: new Date(now).toISOString() }));
+  env.GARAGE_DO.storage.map.set("migrated", "x");
+  assert.equal((await (await worker.fetch(api("/api/status"), env)).json()).status, "closed");
+});
+
+test("two simultaneous commands send only one pulse", async () => {
+  await worker.fetch(uplinkRequest(statusPacket("L", "H")), env);
+  let release;
+  globalThis.fetch = async (url, init) => {
+    downlinkCalls.push({ url, init });
+    await new Promise((r) => (release = r));
+    return new Response("{}", { status: 200 });
+  };
+  const first = worker.fetch(api("/api/command", { method: "POST", body: { action: "open" } }), env);
+  await new Promise((r) => setTimeout(r, 5));
+  const second = await worker.fetch(api("/api/command", { method: "POST", body: { action: "open" } }), env);
+  release();
+  assert.equal((await first).status, 200);
+  assert.equal(second.status, 429);
+  assert.equal(downlinkCalls.length, 1);
+});
+
+test("status, trigger and history are visible immediately after the uplink", async () => {
+  await worker.fetch(uplinkRequest(statusPacket("L", "H"), { receivedAt: new Date(Date.now() - 30_000).toISOString() }), env);
+  await worker.fetch(uplinkRequest({ Work_mode: "Exit mode", DI1_flag: "True" }, { confirmed: true }), env);
+  await worker.fetch(uplinkRequest(statusPacket("H", "H")), env);
+  const s = await (await worker.fetch(api("/api/status"), env)).json();
+  assert.equal(s.status, "moving");
+  assert.ok(s.lastTriggerAt);
+  const { history } = await (await worker.fetch(api("/api/history"), env)).json();
+  assert.deepEqual(history.map((h) => h.status), ["moving", "closed"]);
 });

@@ -2,7 +2,16 @@ name = "garasjeport"
 main = "src/index.js"
 compatibility_date = "2025-10-01"
 
-# Fyll inn id-en du får fra: npx wrangler kv namespace create GARAGE
+# Status, historikk og tellere ligger i Durable Object-en GarageState (alltid oppdatert).
+[[durable_objects.bindings]]
+name = "GARAGE_DO"
+class_name = "GarageState"
+
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["GarageState"]
+
+# Gammel lagring. Brukes bare én gang, til å kopiere eksisterende data inn i GarageState.
 [[kv_namespaces]]
 binding = "GARAGE"
 id = "ea5d418f336746209e65482f5ddbcf46"

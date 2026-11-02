@@ -3,7 +3,7 @@
 Mobilvennlig webapp som viser status for garasjeporten og sender relépuls via The Things Network (TTN).
 
 ```
-LT-22222-L ──LoRa──▶ LPS8N ──▶ TTN (eu1) ──webhook──▶ Cloudflare Worker (+ KV)
+LT-22222-L ──LoRa──▶ LPS8N ──▶ TTN (eu1) ──webhook──▶ Cloudflare Worker (+ Durable Object)
                                   ▲                        ▲
                                   └──── downlink (puls) ───┤
                                                            │ fetch med tilgangstoken
@@ -12,7 +12,8 @@ LT-22222-L ──LoRa──▶ LPS8N ──▶ TTN (eu1) ──webhook──▶ 
 
 | Mappe/fil | Innhold |
 |---|---|
-| `src/index.js` | Workeren: TTN-webhook, API for frontend, sending av downlink |
+| `src/index.js` | Workeren: sjekker webhook-hemmelighet, tilgangstoken og CORS, og sender videre til Durable Object-en |
+| `src/garage.js` | Durable Object-en `GarageState`: lagrer status, historikk og tellere, og sender relépuls til TTN |
 | `src/logic.js` | Statuslogikk, regler for kommandoer, budsjett (testes separat) |
 | `wrangler.toml` | Oppsett for Workeren (ikke-hemmelige innstillinger) |
 | `docs/` | Frontend som GitHub Pages publiserer |
@@ -50,7 +51,7 @@ npx wrangler login
 ```powershell
 npx wrangler kv namespace create GARAGE
 ```
-Lager en liten nøkkel/verdi-database hos Cloudflare der Workeren lagrer siste status, historikk og downlink-telling. Kommandoen skriver ut noe sånt som:
+Lager en liten nøkkel/verdi-database hos Cloudflare. (Workeren lagrer nå alt i Durable Object-en `GarageState`, som opprettes automatisk ved deploy. KV brukes bare én gang, til å kopiere over data fra før Durable Object-en kom. Nye installasjoner trenger egentlig ikke dette trinnet.) Kommandoen skriver ut noe sånt som:
 
 ```
 [[kv_namespaces]]
