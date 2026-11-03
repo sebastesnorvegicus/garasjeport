@@ -2,6 +2,8 @@ export const STATUS = {
   CLOSED: "closed",
   OPEN: "open",
   MOVING: "moving",
+  OPENING: "opening",
+  CLOSING: "closing",
   ERROR: "error",
   UNKNOWN: "unknown",
 };
@@ -17,6 +19,9 @@ export function readConfig(env) {
     pulseLimit: Number(env.PULSE_DAILY_LIMIT || 20),
     pulseIntervalMs: Number(env.PULSE_MIN_INTERVAL_SECONDS || 15) * 1000,
     pendingTimeoutMs: 3 * 60_000,
+    // A full run takes about 26 s. After this long without an end-position
+    // trigger the direction is no longer trusted (the door may have been stopped).
+    motionMaxMs: 60_000,
   };
 }
 
@@ -85,12 +90,59 @@ export function checkCommand(action, status, ctx, cfg) {
   return { ok: true };
 }
 
-export function pendingCommand(lastCommand, state, cfg, now) {
+// A command is pending until the node reports anything newer: a trigger or a status packet.
+export function pendingCommand(lastCommand, state, cfg, now, lastTriggerAt = null) {
   if (!lastCommand) return null;
   const sentAt = Date.parse(lastCommand.sentAt);
   if (now - sentAt > cfg.pendingTimeoutMs) return null;
   if (state?.statusAt && Date.parse(state.statusAt) > sentAt) return null;
+  if (lastTriggerAt && Date.parse(lastTriggerAt) > sentAt) return null;
   return lastCommand;
+}
+
+// In MOD6 trigger packets, DIx_status "True" marks the input that caused the trigger.
+// It is not the input level. Returns "DI1", "DI2" or null if not exactly one.
+export function triggerSensor(raw) {
+  const hits = ["DI1", "DI2"].filter((d) => raw?.[`${d}_status`] === "True");
+  return hits.length === 1 ? hits[0] : null;
+}
+
+const IN_MOTION = [STATUS.MOVING, STATUS.OPENING, STATUS.CLOSING];
+
+// Which state the door is in right after a trigger on `sensor`, given the status before it.
+// Leaving an end position starts a run; reaching one ends it. Anything else is not inferred.
+export function inferFromTrigger(sensor, prevStatus, cfg) {
+  if (sensor === cfg.closedSensor) {
+    if (prevStatus === STATUS.CLOSED) return STATUS.OPENING;
+    if (IN_MOTION.includes(prevStatus)) return STATUS.CLOSED;
+  }
+  if (sensor === cfg.openSensor) {
+    if (prevStatus === STATUS.OPEN) return STATUS.CLOSING;
+    if (IN_MOTION.includes(prevStatus)) return STATUS.OPEN;
+  }
+  return null;
+}
+
+// Status shown to the user. Status packets are authoritative; a trigger-inferred
+// status (`inferred` = { status, at }) is used while it is newer than the last status
+// packet (unconfirmed), and to give a "moving" status packet its direction.
+export function effectiveStatus(state, inferred, lastCommand, cfg, now) {
+  const base = computeStatus(state, cfg, now);
+  if (!inferred) return { status: base, confirmed: true };
+
+  const infAt = Date.parse(inferred.at);
+  const statusAt = state?.statusAt ? Date.parse(state.statusAt) : 0;
+  const isRun = inferred.status === STATUS.OPENING || inferred.status === STATUS.CLOSING;
+  // A pulse after the run started may have stopped or reversed the door.
+  const runValid = isRun && now - infAt <= cfg.motionMaxMs
+    && !(lastCommand?.sentAt && Date.parse(lastCommand.sentAt) > infAt);
+
+  if (infAt > statusAt) {
+    if (!isRun) return { status: inferred.status, confirmed: false };
+    return { status: runValid ? inferred.status : STATUS.MOVING, confirmed: false };
+  }
+  if (base === STATUS.MOVING && runValid) return { status: inferred.status, confirmed: true };
+  return { status: base, confirmed: true };
 }
 
 export function osloDate(now) {

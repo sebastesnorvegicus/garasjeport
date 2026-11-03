@@ -2,15 +2,20 @@
   const WORKER = window.GARAGE_CONFIG.workerUrl.replace(/\/+$/, "");
   const TOKEN_KEY = "garasjeport.token";
   const POLL_MS = 5000;
+  const FAST_POLL_MS = 2000; // while a command is pending or the door is moving
+  const NO_REACTION_MS = 12_000; // the node normally reacts within ~2.5 s
 
   const LABELS = {
     closed: "Lukket",
     open: "Åpen",
     moving: "I bevegelse / stoppet",
+    opening: "Åpner",
+    closing: "Lukker",
     error: "Feil (sensor)",
     unknown: "Ukjent",
   };
   const ACTION_LABELS = { open: "Åpne", close: "Lukk", pulse: "Manuell puls" };
+  const PENDING_LABELS = { open: "Åpner …", close: "Lukker …", pulse: "Puls sendt …" };
 
   const $ = (id) => document.getElementById(id);
   let clockOffset = 0;
@@ -80,16 +85,23 @@
     $("login").hidden = true;
     $("app").hidden = false;
 
-    $("status-card").className = `card status-${s.status}`;
-    $("status-label").textContent = LABELS[s.status] || s.status;
-    $("status-time").textContent = s.updatedAt
-      ? `Siste statusmelding ${ago(s.updatedAt)} (${clock(s.updatedAt)})`
-      : "Ingen statusmelding mottatt ennå";
+    const pending = s.pendingCommand;
+    $("status-card").className = `card status-${pending ? "moving" : s.status}`;
+    $("status-label").textContent = pending ? PENDING_LABELS[pending.action] : (LABELS[s.status] || s.status);
+    $("status-time").textContent = pending
+      ? `Kommando sendt kl. ${clock(pending.sentAt)}, venter på at porten reagerer`
+      : s.statusConfirmed === false
+        ? "Foreløpig, bekreftes av neste statusmelding om noen sekunder"
+        : s.updatedAt
+          ? `Siste statusmelding ${ago(s.updatedAt)} (${clock(s.updatedAt)})`
+          : "Ingen statusmelding mottatt ennå";
 
     let notice = "";
-    if (s.pendingCommand) {
-      notice = `${ACTION_LABELS[s.pendingCommand.action]}: kommando sendt kl. ${clock(s.pendingCommand.sentAt)}, venter på status …`;
-    } else if (s.lastTriggerAt && (!s.updatedAt || s.lastTriggerAt > s.updatedAt)
+    if (pending) {
+      if (serverNow() - Date.parse(pending.sentAt) > NO_REACTION_MS) {
+        notice = "Ingen reaksjon fra porten ennå. Statusen oppdateres når noden melder fra.";
+      }
+    } else if (s.statusConfirmed !== false && s.lastTriggerAt && (!s.updatedAt || s.lastTriggerAt > s.updatedAt)
       && serverNow() - Date.parse(s.lastTriggerAt) < 60_000) {
       notice = "Endring oppdaget, venter på status …";
     } else if (s.status === "moving") {
@@ -106,11 +118,13 @@
     $("notice").textContent = notice;
     $("notice").hidden = !notice;
 
-    const blocked = busy || !!s.pendingCommand || s.pulsesToday >= s.pulseLimit;
-    $("open-btn").disabled = blocked || s.status !== "closed";
-    $("close-btn").disabled = blocked || s.status !== "open";
-    $("pulse-btn").hidden = !["moving", "error", "unknown"].includes(s.status);
-    $("pulse-btn").disabled = blocked;
+    // One button: Åpne when closed, Lukk when open, otherwise a manual pulse with a warning.
+    const btn = $("action-btn");
+    btn.dataset.action = s.status === "closed" ? "open" : s.status === "open" ? "close" : "pulse";
+    btn.textContent = pending || busy ? "Venter på porten …"
+      : btn.dataset.action === "pulse" ? "Send manuell puls …" : ACTION_LABELS[btn.dataset.action];
+    btn.className = `big ${btn.dataset.action === "pulse" && !pending && !busy ? "danger" : "primary"}`;
+    btn.disabled = busy || !!pending || s.pulsesToday >= s.pulseLimit;
 
     const lvl = (v) => (v === "L" ? "magnet inntil" : v === "H" ? "magnet borte" : "–");
     const closedV = s.closedSensor === "DI1" ? s.di1 : s.di2;
@@ -154,7 +168,8 @@
     try {
       const s = await api("/api/status");
       clockOffset = Date.parse(s.serverTime) - Date.now();
-      if (last?.updatedAt !== s.updatedAt || !!last?.pendingCommand !== !!s.pendingCommand) loadHistory();
+      if (last?.updatedAt !== s.updatedAt || last?.status !== s.status
+        || !!last?.pendingCommand !== !!s.pendingCommand) loadHistory();
       render(s);
       if ($("message").dataset.network) { showMessage(""); delete $("message").dataset.network; }
     } catch (err) {
@@ -206,16 +221,20 @@
       showLogin();
     }
   });
-  $("open-btn").addEventListener("click", () => sendCommand("open"));
-  $("close-btn").addEventListener("click", () => sendCommand("close"));
-  $("pulse-btn").addEventListener("click", () => sendCommand("pulse"));
+  $("action-btn").addEventListener("click", () => sendCommand($("action-btn").dataset.action));
 
   document.addEventListener("visibilitychange", () => {
     if (document.visibilityState === "visible") refresh();
   });
-  setInterval(() => {
-    if (document.visibilityState === "visible" && memToken && !busy) refresh();
-  }, POLL_MS);
+
+  // Poll faster while something is happening, so each step shows up within ~2 s.
+  const active = (s) => !!s && (!!s.pendingCommand || s.statusConfirmed === false
+    || ["opening", "closing", "moving"].includes(s.status));
+  async function poll() {
+    if (document.visibilityState === "visible" && memToken && !busy) await refresh();
+    setTimeout(poll, active(last) ? FAST_POLL_MS : POLL_MS);
+  }
 
   refresh();
+  setTimeout(poll, POLL_MS);
 })();

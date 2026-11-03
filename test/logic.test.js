@@ -1,6 +1,17 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { checkCommand, computeStatus, osloDate, parseUplink, pendingCommand, readConfig, safeEqual } from "../src/logic.js";
+import {
+  checkCommand,
+  computeStatus,
+  effectiveStatus,
+  inferFromTrigger,
+  osloDate,
+  parseUplink,
+  pendingCommand,
+  readConfig,
+  safeEqual,
+  triggerSensor,
+} from "../src/logic.js";
 
 const cfg = readConfig({});
 const now = Date.parse("2026-10-22T12:00:00Z");
@@ -102,4 +113,55 @@ test("safeEqual", async () => {
   assert.equal(await safeEqual("", ""), false);
   assert.equal(await safeEqual(null, "abc"), false);
   assert.equal(await safeEqual("abc", undefined), false);
+});
+
+// Real trigger payloads from 3.11: DIx_status "True" marks the input that fired.
+test("triggerSensor reads which input fired", () => {
+  assert.equal(triggerSensor({ DI1_status: "False", DI2_status: "True", DI1_flag: "True", DI2_flag: "True" }), "DI2");
+  assert.equal(triggerSensor({ DI1_status: "True", DI2_status: "False" }), "DI1");
+  assert.equal(triggerSensor({ DI1_status: "True", DI2_status: "True" }), null);
+  assert.equal(triggerSensor({ DI1_flag: "True" }), null);
+  assert.equal(triggerSensor(undefined), null);
+});
+
+test("inferFromTrigger: leaving and reaching end positions (closed sensor DI2)", () => {
+  const c = readConfig({ CLOSED_SENSOR: "DI2" });
+  assert.equal(inferFromTrigger("DI2", "closed", c), "opening");
+  assert.equal(inferFromTrigger("DI1", "opening", c), "open");
+  assert.equal(inferFromTrigger("DI1", "open", c), "closing");
+  assert.equal(inferFromTrigger("DI2", "closing", c), "closed");
+  assert.equal(inferFromTrigger("DI2", "moving", c), "closed");
+  assert.equal(inferFromTrigger("DI2", "open", c), null);
+  assert.equal(inferFromTrigger("DI1", "closed", c), null);
+  assert.equal(inferFromTrigger("DI1", "unknown", c), null);
+  assert.equal(inferFromTrigger(null, "closed", c), null);
+});
+
+test("effectiveStatus combines status packets and trigger inference", () => {
+  const c = readConfig({ CLOSED_SENSOR: "DI2" });
+  const t = (sec) => new Date(now + sec * 1000).toISOString();
+  const closed = { di1: "H", di2: "L", statusAt: t(-60) };
+  const moving = { di1: "H", di2: "H", statusAt: t(-20) };
+
+  // no trigger: status packet as is
+  assert.deepEqual(effectiveStatus(closed, null, null, c, now), { status: "closed", confirmed: true });
+  // trigger newer than the status packet: unconfirmed
+  assert.deepEqual(effectiveStatus(closed, { status: "opening", at: t(-25) }, null, c, now), { status: "opening", confirmed: false });
+  assert.deepEqual(effectiveStatus(moving, { status: "open", at: t(-2) }, null, c, now), { status: "open", confirmed: false });
+  // "moving" status packet gets the direction from the trigger before it
+  assert.deepEqual(effectiveStatus(moving, { status: "opening", at: t(-27) }, null, c, now), { status: "opening", confirmed: true });
+  // direction expires after motionMaxMs, and is dropped after a new pulse
+  assert.equal(effectiveStatus(moving, { status: "opening", at: t(-70) }, null, c, now).status, "moving");
+  assert.equal(effectiveStatus(moving, { status: "opening", at: t(-27) }, { sentAt: t(-10) }, c, now).status, "moving");
+  assert.equal(effectiveStatus({ ...closed, statusAt: t(-90) }, { status: "opening", at: t(-80) }, null, c, now).status, "moving");
+  // a newer end-position status packet always wins
+  const open = { di1: "L", di2: "H", statusAt: t(-1) };
+  assert.deepEqual(effectiveStatus(open, { status: "open", at: t(-8) }, null, c, now), { status: "open", confirmed: true });
+  assert.deepEqual(effectiveStatus(open, { status: "closed", at: t(-8) }, null, c, now), { status: "open", confirmed: true });
+});
+
+test("pending command clears on a newer trigger", () => {
+  const cmd = { action: "open", sentAt: "2026-10-22T11:59:30Z" };
+  assert.deepEqual(pendingCommand(cmd, null, cfg, now, "2026-10-22T11:59:00Z"), cmd);
+  assert.equal(pendingCommand(cmd, null, cfg, now, "2026-10-22T11:59:32Z"), null);
 });

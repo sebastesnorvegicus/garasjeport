@@ -30,6 +30,9 @@ function fakeStorage() {
       if (typeof key === "object") for (const [k, v] of Object.entries(key)) map.set(k, structuredClone(v));
       else map.set(key, structuredClone(value));
     },
+    async delete(key) {
+      return map.delete(key);
+    },
   };
 }
 
@@ -304,4 +307,53 @@ test("status, trigger and history are visible immediately after the uplink", asy
   assert.equal(trig.confirmed, true);
   assert.equal(trig.DI1_flag, "True");
   assert.equal(trig.rssi, -82);
+});
+
+// Replays an opening from the real data on 3.11 (closed sensor DI2).
+test("app command → trigger → status gives Åpner and Åpen ~7 s before the status packets", async () => {
+  env.CLOSED_SENSOR = "DI2";
+  const at = (sec) => ({ receivedAt: new Date(Date.now() + sec * 1000).toISOString() });
+  const trig = (di1, di2) => ({ Work_mode: "Exit mode", DI1_status: di1, DI2_status: di2, DI1_flag: "True", DI2_flag: "True" });
+  const status = async () => (await worker.fetch(api("/api/status"), env)).json();
+
+  await worker.fetch(uplinkRequest(statusPacket("H", "L"), at(-60)), env);
+  assert.equal((await status()).status, "closed");
+  assert.equal((await worker.fetch(api("/api/command", { method: "POST", body: { action: "open" } }), env)).status, 200);
+  assert.equal((await status()).pendingCommand.action, "open");
+
+  await worker.fetch(uplinkRequest(trig("False", "True"), { ...at(2), confirmed: true }), env);
+  let s = await status();
+  assert.deepEqual([s.status, s.statusConfirmed, s.pendingCommand], ["opening", false, null]);
+
+  await worker.fetch(uplinkRequest(statusPacket("H", "H"), at(9)), env);
+  s = await status();
+  assert.deepEqual([s.status, s.statusConfirmed], ["opening", true]);
+
+  await worker.fetch(uplinkRequest(trig("True", "False"), { ...at(27), confirmed: true }), env);
+  s = await status();
+  assert.deepEqual([s.status, s.statusConfirmed], ["open", false]);
+
+  await worker.fetch(uplinkRequest(statusPacket("L", "H"), at(34)), env);
+  s = await status();
+  assert.deepEqual([s.status, s.statusConfirmed], ["open", true]);
+
+  const { history } = await (await worker.fetch(api("/api/history"), env)).json();
+  assert.deepEqual(
+    history.filter((h) => h.type !== "trigger").map((h) => h.type === "command" ? `cmd:${h.action}` : h.status),
+    ["open", "opening", "cmd:open", "closed"],
+  );
+  assert.deepEqual(history.filter((h) => h.type === "trigger").map((h) => h.inferred), ["open", "opening"]);
+});
+
+test("Lukk is allowed on a trigger-inferred Åpen, and remote-control runs get a direction", async () => {
+  env.CLOSED_SENSOR = "DI2";
+  const at = (sec) => ({ receivedAt: new Date(Date.now() + sec * 1000).toISOString() });
+  const trig = (di1, di2) => ({ Work_mode: "Exit mode", DI1_status: di1, DI2_status: di2 });
+  await worker.fetch(uplinkRequest(statusPacket("H", "L"), at(-60)), env);
+  await worker.fetch(uplinkRequest(trig("False", "True"), at(-40)), env);
+  await worker.fetch(uplinkRequest(statusPacket("H", "H"), at(-33)), env);
+  await worker.fetch(uplinkRequest(trig("True", "False"), at(-1)), env);
+  const s = await (await worker.fetch(api("/api/status"), env)).json();
+  assert.deepEqual([s.status, s.statusConfirmed], ["open", false]);
+  assert.equal((await worker.fetch(api("/api/command", { method: "POST", body: { action: "close" } }), env)).status, 200);
 });

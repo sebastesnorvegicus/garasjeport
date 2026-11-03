@@ -1,4 +1,13 @@
-import { checkCommand, computeStatus, osloDate, pendingCommand, readConfig } from "./logic.js";
+import {
+  checkCommand,
+  computeStatus,
+  effectiveStatus,
+  inferFromTrigger,
+  osloDate,
+  pendingCommand,
+  readConfig,
+  triggerSensor,
+} from "./logic.js";
 
 const HISTORY_MAX = 300;
 const KV_KEYS = ["state", "lastTrigger", "lastCommand", "history"];
@@ -47,22 +56,9 @@ export class GarageState {
     // Each confirmed uplink costs one downlink (the ACK). Counted for information only.
     if (up.confirmed) await this.increment(now, { downlinks: 1 });
 
-    if (up.kind === "trigger") {
-      await this.storage.put("lastTrigger", { receivedAt: up.receivedAt });
-      // Logged for timing analysis (trigger → status). The app hides these entries.
-      await this.appendHistory({
-        t: up.receivedAt,
-        type: "trigger",
-        confirmed: up.confirmed,
-        fCnt: up.fCnt,
-        rssi: up.rssi,
-        snr: up.snr,
-        ...up.raw,
-      });
-      return reply({ result: "ok" });
-    }
-
     const cfg = readConfig(this.env);
+    if (up.kind === "trigger") return this.trigger(up, cfg);
+
     const prev = await this.storage.get("state");
     if (prev?.statusAt && Date.parse(up.receivedAt) <= Date.parse(prev.statusAt)) {
       return reply({ result: "stale" });
@@ -77,21 +73,63 @@ export class GarageState {
     };
     await this.storage.put("state", next);
 
-    const prevStatus = prev ? computeStatus(prev, cfg, Date.parse(prev.statusAt)) : null;
-    const nextStatus = computeStatus(next, cfg, Date.parse(next.statusAt));
-    if (prevStatus !== nextStatus) {
+    // History records the status as the app shows it, so a run is logged as Åpner/Lukker.
+    const at = Date.parse(next.statusAt);
+    const { inferred, lastCommand } = await this.load(["inferred", "lastCommand"]);
+    const nextStatus = effectiveStatus(next, inferred, lastCommand, cfg, at).status;
+    const logged = (await this.storage.get("loggedStatus"))
+      ?? (prev ? computeStatus(prev, cfg, Date.parse(prev.statusAt)) : null);
+    if (logged !== nextStatus) {
       await this.appendHistory({ t: up.receivedAt, type: "status", status: nextStatus, di1: up.di1, di2: up.di2 });
+      await this.storage.put("loggedStatus", nextStatus);
     }
     return reply({ result: "ok" });
   }
 
+  // A trigger arrives about 7 s before the status packet that follows it. Combined with the
+  // status before it, the input that fired tells whether the door left or reached an end.
+  async trigger(up, cfg) {
+    const at = Date.parse(up.receivedAt);
+    const { state, inferred, lastCommand } = await this.load(["state", "inferred", "lastCommand"]);
+    await this.storage.put("lastTrigger", { receivedAt: up.receivedAt });
+
+    let result = null;
+    if (!state?.statusAt || at > Date.parse(state.statusAt)) {
+      const before = effectiveStatus(state, inferred, lastCommand, cfg, at).status;
+      result = inferFromTrigger(triggerSensor(up.raw), before, cfg);
+      if (result) await this.storage.put("inferred", { status: result, at: up.receivedAt });
+      else await this.storage.delete("inferred");
+    }
+
+    // Logged for timing analysis. The app hides these entries.
+    await this.appendHistory({
+      t: up.receivedAt,
+      type: "trigger",
+      inferred: result,
+      confirmed: up.confirmed,
+      fCnt: up.fCnt,
+      rssi: up.rssi,
+      snr: up.snr,
+      ...up.raw,
+    });
+    return reply({ result: "ok" });
+  }
+
+  async load(keys) {
+    const map = await this.storage.get(keys);
+    return Object.fromEntries(keys.map((k) => [k, map.get(k)]));
+  }
+
   async status(now) {
     const cfg = readConfig(this.env);
-    const data = await this.storage.get(["state", "lastTrigger", "lastCommand"]);
-    const state = data.get("state");
+    const { state, lastTrigger, lastCommand, inferred } =
+      await this.load(["state", "lastTrigger", "lastCommand", "inferred"]);
     const counters = await this.counters(now);
+    const eff = effectiveStatus(state, inferred, lastCommand, cfg, now);
     return {
-      status: computeStatus(state, cfg, now),
+      status: eff.status,
+      // false while the status comes from a trigger and the status packet has not arrived yet
+      statusConfirmed: eff.confirmed,
       di1: state?.di1 ?? null,
       di2: state?.di2 ?? null,
       closedSensor: cfg.closedSensor,
@@ -99,8 +137,8 @@ export class GarageState {
       updatedAt: state?.statusAt ?? null,
       rssi: state?.rssi ?? null,
       snr: state?.snr ?? null,
-      lastTriggerAt: data.get("lastTrigger")?.receivedAt ?? null,
-      pendingCommand: pendingCommand(data.get("lastCommand"), state, cfg, now),
+      lastTriggerAt: lastTrigger?.receivedAt ?? null,
+      pendingCommand: pendingCommand(lastCommand, state, cfg, now, lastTrigger?.receivedAt),
       downlinksToday: counters.downlinks,
       pulsesToday: counters.pulses,
       pulseLimit: cfg.pulseLimit,
@@ -117,10 +155,9 @@ export class GarageState {
     this.sending = true;
     try {
       const cfg = readConfig(this.env);
-      const state = await this.storage.get("state");
-      const lastCommand = await this.storage.get("lastCommand");
+      const { state, lastCommand, inferred } = await this.load(["state", "lastCommand", "inferred"]);
       const { pulses } = await this.counters(now);
-      const status = computeStatus(state, cfg, now);
+      const { status } = effectiveStatus(state, inferred, lastCommand, cfg, now);
 
       const check = checkCommand(action, status, { now, lastSentAt: lastCommand?.sentAt, pulsesToday: pulses }, cfg);
       if (!check.ok) return reply({ error: check.message, code: check.code, status }, check.http);

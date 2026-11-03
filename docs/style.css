@@ -80,13 +80,13 @@ h2 { font-size: 1.1rem; margin: 24px 0 8px; }
 
 .status-closed { border-left-color: var(--closed); }
 .status-open { border-left-color: var(--open); }
-.status-moving { border-left-color: var(--moving); }
+.status-moving, .status-opening, .status-closing { border-left-color: var(--moving); }
 .status-error { border-left-color: var(--error); }
 
 .status-label { font-size: 2rem; font-weight: 700; }
 .status-closed .status-label { color: var(--closed); }
 .status-open .status-label { color: var(--open); }
-.status-moving .status-label { color: var(--moving); }
+.status-moving .status-label, .status-opening .status-label, .status-closing .status-label { color: var(--moving); }
 .status-error .status-label { color: var(--error); }
 .status-unknown .status-label { color: var(--unknown); }
 
@@ -102,12 +102,6 @@ h2 { font-size: 1.1rem; margin: 24px 0 8px; }
 
 .error { color: var(--danger); font-weight: 600; }
 
-.actions {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 12px;
-  margin: 16px 0 12px;
-}
 
 button {
   font: inherit;
@@ -126,7 +120,7 @@ button.primary {
   font-weight: 600;
 }
 
-button.big { font-size: 1.25rem; padding: 20px 0; }
+button.big { width: 100%; margin: 16px 0 12px; font-size: 1.25rem; padding: 20px 0; }
 
 button.danger {
   width: 100%;
