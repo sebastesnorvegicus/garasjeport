@@ -165,6 +165,12 @@ button.danger {
   border-color: var(--danger);
 }
 
+button.neutral {
+  background: transparent;
+  color: var(--muted);
+  border-color: var(--border);
+}
+
 button.danger-fill {
   background: var(--danger);
   color: #fff;

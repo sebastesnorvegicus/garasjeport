@@ -129,9 +129,14 @@
     // One button: Åpne when closed, Lukk when open, otherwise a manual pulse with a warning.
     const btn = $("action-btn");
     btn.dataset.action = s.status === "closed" ? "open" : s.status === "open" ? "close" : "pulse";
-    btn.textContent = pending || busy ? "Venter på porten …"
-      : btn.dataset.action === "pulse" ? "Send manuell puls …" : ACTION_LABELS[btn.dataset.action];
-    btn.className = `big ${btn.dataset.action === "pulse" && !pending && !busy ? "danger" : "primary"}`;
+    // During a normal run the pulse button is grey and neutral; red only when the door
+    // has stopped midway, the sensors disagree or the status is unknown.
+    const running = s.status === "opening" || s.status === "closing";
+    const waiting = !!pending || busy;
+    btn.textContent = waiting ? "Venter på porten …"
+      : btn.dataset.action !== "pulse" ? ACTION_LABELS[btn.dataset.action]
+        : running ? "Send puls (stopp/snu) …" : "Send manuell puls …";
+    btn.className = `big ${waiting || btn.dataset.action !== "pulse" ? "primary" : running ? "neutral" : "danger"}`;
     btn.disabled = busy || !!pending || s.pulsesToday >= s.pulseLimit;
 
     const lvl = (v) => (v === "L" ? "magnet inntil" : v === "H" ? "magnet borte" : "–");
