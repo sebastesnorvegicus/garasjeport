@@ -155,7 +155,7 @@ test("preflight succeeds without token", async () => {
   assert.match(res.headers.get("Access-Control-Allow-Headers"), /Authorization/);
 });
 
-test("open sends exactly one unconfirmed pulse via down/push when closed", async () => {
+test("open sends exactly one unconfirmed pulse via down/replace when closed", async () => {
   await worker.fetch(uplinkRequest(statusPacket("L", "H")), env);
   const res = await worker.fetch(api("/api/command", { method: "POST", body: { action: "open" } }), env);
   assert.equal(res.status, 200);
@@ -164,7 +164,7 @@ test("open sends exactly one unconfirmed pulse via down/push when closed", async
   const { url, init } = downlinkCalls[0];
   assert.equal(
     url,
-    "https://eu1.cloud.thethings.network/api/v3/as/applications/garasjeport-hellargata/webhooks/cf-worker/devices/garasjeport-node/down/push",
+    "https://eu1.cloud.thethings.network/api/v3/as/applications/garasjeport-hellargata/webhooks/cf-worker/devices/garasjeport-node/down/replace",
   );
   assert.equal(init.headers.Authorization, "Bearer NNSXS.test");
   assert.deepEqual(JSON.parse(init.body), {
@@ -356,4 +356,45 @@ test("Lukk is allowed on a trigger-inferred Åpen, and remote-control runs get a
   const s = await (await worker.fetch(api("/api/status"), env)).json();
   assert.deepEqual([s.status, s.statusConfirmed], ["open", false]);
   assert.equal((await worker.fetch(api("/api/command", { method: "POST", body: { action: "close" } }), env)).status, 200);
+});
+
+test("TTN timeout: 504, command recorded as uncertain so the app waits instead of retrying", async () => {
+  await worker.fetch(uplinkRequest(statusPacket("L", "H")), env);
+  globalThis.fetch = async (url, init) => {
+    downlinkCalls.push({ url, init });
+    assert.ok(init.signal, "TTN call must have a timeout signal");
+    throw new DOMException("The operation timed out.", "TimeoutError");
+  };
+  const res = await worker.fetch(api("/api/command", { method: "POST", body: { action: "open" } }), env);
+  assert.equal(res.status, 504);
+  const s = await (await worker.fetch(api("/api/status"), env)).json();
+  assert.equal(s.pendingCommand.action, "open");
+  assert.equal(s.pendingCommand.uncertain, true);
+  assert.equal(s.pulsesToday, 1);
+  assert.equal((await worker.fetch(api("/api/command", { method: "POST", body: { action: "open" } }), env)).status, 429);
+});
+
+test("unanswered command is reported after 20 s and the button is free again", async () => {
+  await worker.fetch(uplinkRequest(statusPacket("H", "L"), { receivedAt: new Date(Date.now() - 60_000).toISOString() }), env);
+  await worker.fetch(api("/api/command", { method: "POST", body: { action: "close" } }), env);
+  const { map } = env.GARAGE_DO.storage;
+  map.set("lastCommand", { ...map.get("lastCommand"), sentAt: new Date(Date.now() - 25_000).toISOString() });
+  const s = await (await worker.fetch(api("/api/status"), env)).json();
+  assert.equal(s.pendingCommand, null);
+  assert.equal(s.unansweredCommand.action, "close");
+});
+
+test("downlink webhook: secret required, events logged and exposed", async () => {
+  const req = (body, secret = "hook-secret") => new Request(`${W}/ttn/downlink`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "X-Webhook-Secret": secret },
+    body: JSON.stringify({ end_device_ids: { device_id: "garasjeport-node" }, received_at: new Date().toISOString(), ...body }),
+  });
+  assert.equal((await worker.fetch(req({ downlink_sent: { f_port: 1 } }, "nope"), env)).status, 401);
+  assert.equal((await worker.fetch(req({ downlink_queued: { f_port: 1 } }), env)).status, 200);
+  assert.equal((await worker.fetch(req({ downlink_failed: { downlink: { f_port: 1 }, error: { namespace: "pkg/gs", name: "too_late" } } }), env)).status, 200);
+  const s = await (await worker.fetch(api("/api/status"), env)).json();
+  assert.deepEqual([s.lastDownlink.event, s.lastDownlink.error], ["failed", "pkg/gs:too_late"]);
+  const { history } = await (await worker.fetch(api("/api/history"), env)).json();
+  assert.deepEqual(history.map((h) => `${h.type}:${h.event}`), ["downlink:failed", "downlink:queued"]);
 });

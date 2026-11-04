@@ -4,6 +4,7 @@
   const POLL_MS = 5000;
   const FAST_POLL_MS = 2000; // while a command is pending or the door is moving
   const NO_REACTION_MS = 12_000; // the node normally reacts within ~2.5 s
+  const REQUEST_TIMEOUT_MS = 10_000; // no request may hang the app
 
   const LABELS = {
     closed: "Lukket",
@@ -42,13 +43,23 @@
   class AuthError extends Error {}
 
   async function api(path, options = {}) {
-    const res = await fetch(WORKER + path, {
-      ...options,
-      headers: {
-        Authorization: `Bearer ${memToken}`,
-        "Content-Type": "application/json",
-      },
-    });
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), REQUEST_TIMEOUT_MS);
+    let res;
+    try {
+      res = await fetch(WORKER + path, {
+        ...options,
+        signal: ctrl.signal,
+        headers: {
+          Authorization: `Bearer ${memToken}`,
+          "Content-Type": "application/json",
+        },
+      });
+    } catch (err) {
+      throw new Error(ctrl.signal.aborted ? "Workeren svarte ikke i tide." : "Får ikke kontakt med Workeren.");
+    } finally {
+      clearTimeout(timer);
+    }
     if (res.status === 401) throw new AuthError();
     const data = await res.json().catch(() => ({}));
     if (!res.ok) throw new Error(data.error || `Feil fra Workeren (HTTP ${res.status}).`);
@@ -104,11 +115,21 @@
     renderDot();
     $("last-seen").textContent = packetAt ? `${clock(packetAt)} (${ago(packetAt)})` : "–";
 
+    // What TTN said about the latest downlink, if it came after the command.
+    const cmd = pending || s.unansweredCommand;
+    const dl = cmd && s.lastDownlink && Date.parse(s.lastDownlink.at) >= Date.parse(cmd.sentAt) ? s.lastDownlink : null;
+    const ttnSaid = !dl ? ""
+      : dl.event === "failed" ? ` TTN meldte at sendingen feilet (${dl.error}).`
+        : dl.event === "sent" ? " TTN sendte kommandoen, men noden har ikke reagert."
+          : "";
+
     let notice = "";
     if (pending) {
-      if (serverNow() - Date.parse(pending.sentAt) > NO_REACTION_MS) {
-        notice = "Ingen reaksjon fra porten ennå. Statusen oppdateres når noden melder fra.";
+      if (serverNow() - Date.parse(pending.sentAt) > NO_REACTION_MS || dl?.event === "failed") {
+        notice = "Ingen reaksjon fra porten ennå." + ttnSaid;
       }
+    } else if (s.unansweredCommand) {
+      notice = `Porten reagerte ikke på «${ACTION_LABELS[s.unansweredCommand.action]}» (kl. ${clock(s.unansweredCommand.sentAt)}).${ttnSaid} Prøv igjen.`;
     } else if (s.statusConfirmed !== false && s.lastTriggerAt && (!s.updatedAt || s.lastTriggerAt > s.updatedAt)
       && serverNow() - Date.parse(s.lastTriggerAt) < 60_000) {
       notice = "Endring oppdaget, venter på status …";
@@ -154,7 +175,7 @@
   function renderHistory(items) {
     const list = $("history");
     list.replaceChildren();
-    items = items.filter((h) => h.type !== "trigger");
+    items = items.filter((h) => h.type !== "trigger" && h.type !== "downlink");
     if (!items.length) {
       const li = document.createElement("li");
       li.textContent = "Ingen hendelser ennå.";
@@ -298,8 +319,11 @@
   const active = (s) => !!s && (!!s.pendingCommand || s.statusConfirmed === false
     || ["opening", "closing", "moving"].includes(s.status));
   async function poll() {
-    if (document.visibilityState === "visible" && memToken && !busy) await refresh();
-    setTimeout(poll, active(last) ? FAST_POLL_MS : POLL_MS);
+    try {
+      if (document.visibilityState === "visible" && memToken && !busy) await refresh();
+    } finally {
+      setTimeout(poll, active(last) ? FAST_POLL_MS : POLL_MS);
+    }
   }
 
   refresh();

@@ -2,6 +2,10 @@ name = "garasjeport"
 main = "src/index.js"
 compatibility_date = "2025-10-01"
 
+# Workers Logs: console-utskrifter fra Workeren lagres hos Cloudflare og kan søkes i dashbordet.
+[observability]
+enabled = true
+
 # Status, historikk og tellere ligger i Durable Object-en GarageState (alltid oppdatert).
 [[durable_objects.bindings]]
 name = "GARAGE_DO"

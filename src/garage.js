@@ -6,6 +6,7 @@ import {
   osloDate,
   pendingCommand,
   readConfig,
+  unansweredCommand,
   triggerSensor,
 } from "./logic.js";
 
@@ -49,10 +50,12 @@ export class GarageState {
     if (op === "status") return reply(await this.status(now));
     if (op === "history") return reply({ history: (await this.storage.get("history")) ?? [] });
     if (op === "command") return this.command(args.action, now);
+    if (op === "downlink") return this.downlink(args.ev);
     return reply({ error: "Ukjent operasjon." }, 400);
   }
 
   async uplink(up, now) {
+    console.log(JSON.stringify({ ev: "uplink", kind: up.kind, fCnt: up.fCnt, receivedAt: up.receivedAt, di1: up.di1, di2: up.di2, raw: up.raw }));
     // Each confirmed uplink costs one downlink (the ACK). Counted for information only.
     if (up.confirmed) await this.increment(now, { downlinks: 1 });
 
@@ -122,8 +125,8 @@ export class GarageState {
 
   async status(now) {
     const cfg = readConfig(this.env);
-    const { state, lastTrigger, lastCommand, inferred } =
-      await this.load(["state", "lastTrigger", "lastCommand", "inferred"]);
+    const { state, lastTrigger, lastCommand, inferred, lastDownlink } =
+      await this.load(["state", "lastTrigger", "lastCommand", "inferred", "lastDownlink"]);
     const counters = await this.counters(now);
     const eff = effectiveStatus(state, inferred, lastCommand, cfg, now);
     return {
@@ -139,6 +142,8 @@ export class GarageState {
       snr: state?.snr ?? null,
       lastTriggerAt: lastTrigger?.receivedAt ?? null,
       pendingCommand: pendingCommand(lastCommand, state, cfg, now, lastTrigger?.receivedAt),
+      unansweredCommand: unansweredCommand(lastCommand, state, cfg, now, lastTrigger?.receivedAt),
+      lastDownlink: lastDownlink ?? null,
       downlinksToday: counters.downlinks,
       pulsesToday: counters.pulses,
       pulseLimit: cfg.pulseLimit,
@@ -162,20 +167,41 @@ export class GarageState {
       const check = checkCommand(action, status, { now, lastSentAt: lastCommand?.sentAt, pulsesToday: pulses }, cfg);
       if (!check.ok) return reply({ error: check.message, code: check.code, status }, check.http);
 
-      const res = await sendPulse(this.env);
+      const command = { action, sentAt: new Date(now).toISOString(), statusBefore: status };
+      let res;
+      try {
+        res = await sendPulse(this.env, cfg.ttnTimeoutMs);
+      } catch (err) {
+        // No answer from TTN in time. The pulse may still go out, so record the command:
+        // that keeps the rate limit and makes the app wait for a reaction.
+        console.error(JSON.stringify({ ev: "command", action, result: "ttn_timeout", error: String(err) }));
+        await this.record({ ...command, uncertain: true }, now);
+        return reply({ error: "TTN svarte ikke i tide. Pulsen kan likevel ha blitt sendt, så vent og se om porten reagerer." }, 504);
+      }
       if (!res.ok) {
-        console.error("TTN downlink failed", res.status, await res.text());
+        console.error(JSON.stringify({ ev: "command", action, result: "ttn_rejected", status: res.status, body: await res.text() }));
         return reply({ error: `TTN avviste kommandoen (HTTP ${res.status}). Ingen puls sendt.` }, 502);
       }
-
-      const command = { action, sentAt: new Date(now).toISOString(), statusBefore: status };
-      await this.storage.put("lastCommand", command);
-      await this.increment(now, { downlinks: 1, pulses: 1 });
-      await this.appendHistory({ t: command.sentAt, type: "command", action, statusBefore: status });
+      console.log(JSON.stringify({ ev: "command", action, result: "ok", statusBefore: status }));
+      await this.record(command, now);
       return reply({ ok: true, pendingCommand: command });
     } finally {
       this.sending = false;
     }
+  }
+
+  async record(command, now) {
+    await this.storage.put("lastCommand", command);
+    await this.increment(now, { downlinks: 1, pulses: 1 });
+    await this.appendHistory({ t: command.sentAt, type: "command", ...command });
+  }
+
+  // TTN reports what happened to a downlink: queued, sent by a gateway, failed, ...
+  async downlink(ev) {
+    console.log(JSON.stringify({ ev: "downlink", ...ev }));
+    await this.storage.put("lastDownlink", ev);
+    await this.appendHistory({ t: ev.at, type: "downlink", event: ev.event, fPort: ev.fPort, error: ev.error });
+    return reply({ result: "ok" });
   }
 
   // Daily counters per Oslo date: downlinks (incl. ACKs, informational) and
@@ -199,10 +225,12 @@ export class GarageState {
   }
 }
 
-function sendPulse(env) {
+// down/replace (not push): a new command replaces one still waiting in TTN's queue,
+// so a delayed pulse can never be followed by a second one.
+function sendPulse(env, timeoutMs) {
   const url =
     `${env.TTN_BASE_URL}/api/v3/as/applications/${env.TTN_APP_ID}` +
-    `/webhooks/${env.TTN_WEBHOOK_ID}/devices/${env.TTN_DEVICE_ID}/down/push`;
+    `/webhooks/${env.TTN_WEBHOOK_ID}/devices/${env.TTN_DEVICE_ID}/down/replace`;
   return fetch(url, {
     method: "POST",
     headers: {
@@ -213,6 +241,7 @@ function sendPulse(env) {
     body: JSON.stringify({
       downlinks: [{ f_port: 1, frm_payload: env.PULSE_PAYLOAD, priority: "NORMAL" }],
     }),
+    signal: AbortSignal.timeout(timeoutMs),
   });
 }
 

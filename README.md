@@ -119,7 +119,7 @@ I TTN-konsollen: `garasjeport-hellargata` → *Integrations* → *Webhooks* → 
 | Webhook format | JSON |
 | Base URL | Worker-adressen fra trinn 5, uten `/` til slutt |
 | Additional headers | Navn `X-Webhook-Secret`, verdi = WEBHOOK_SECRET fra trinn 6 |
-| Enabled event types | Kryss av **Uplink message**, sti `/ttn/uplink`. Ikke noe annet. |
+| Enabled event types | Kryss av **Uplink message** med sti `/ttn/uplink`, og **Downlink queued**, **Downlink sent** og **Downlink failed** med sti `/ttn/downlink`. Ikke noe annet. |
 
 Trykk *Add webhook*.
 
@@ -215,6 +215,9 @@ git push
 - **Foreløpig status** (kommando sendt, eller tolket fra trigger) vises blek med stiplet kant. **Bekreftet** status (fra statuspakke) vises i full farge med heltrukken kant.
 - **Prikken** i statuskortet viser om systemet lever: grønn = melding fra noden siste 15 min, gul = 15–30 min, rød = over 30 min eller ingen kontakt med Workeren. Den blinker når en ny melding kommer, og viser klokkeslettet når du trykker på den.
 - Sensorer, signal, tellere og historikk ligger under *Detaljer*. Mens noe skjer, oppdateres appen hvert 2. sekund, ellers hvert 5.
+- Reagerer ikke porten innen 20 s etter en kommando, låses knappen opp igjen og appen sier fra («Porten reagerte ikke …»). Kommandoer sendes med TTNs `down/replace`, så en ny kommando erstatter en som fortsatt ligger i kø, og porten kan ikke få to pulser.
+- TTNs meldinger om downlinks (lagt i kø, sendt fra gateway, feilet) logges i historikken, og appen nevner dem når en kommando ikke gir reaksjon.
+- **Workers Logs** er slått på: Cloudflare-dashbordet → Workers & Pages → garasjeport → *Logs* viser hver uplink, kommando og downlink-hendelse.
 - Workeren teller relépulser per døgn. Ved 20 sperres kommandoer til midnatt. I tillegg vises totalt antall downlinks (relépulser + bekreftelser TTN sender for confirmed trigger-pakker), men det tallet sperrer ingenting.
 - Status- og kommandoendringer logges i historikken, sammen med alle trigger-pakker (som appen skjuler). Siste 300 oppføringer.
 

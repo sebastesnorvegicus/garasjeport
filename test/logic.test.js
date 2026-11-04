@@ -7,10 +7,12 @@ import {
   inferFromTrigger,
   osloDate,
   parseUplink,
+  parseDownlinkEvent,
   pendingCommand,
   readConfig,
   safeEqual,
   triggerSensor,
+  unansweredCommand,
 } from "../src/logic.js";
 
 const cfg = readConfig({});
@@ -95,11 +97,11 @@ test("rate limit and daily pulse limit", () => {
   assert.equal(checkCommand("pulse", "open", { now, lastSentAt: null, pulsesToday: 19 }, cfg).ok, true);
 });
 
-test("pending command clears on newer status or after timeout", () => {
-  const cmd = { action: "open", sentAt: "2026-10-22T11:59:30Z" };
+test("pending command clears on newer status or after 20 s", () => {
+  const cmd = { action: "open", sentAt: "2026-10-22T11:59:50Z" };
   assert.deepEqual(pendingCommand(cmd, { statusAt: "2026-10-22T11:59:00Z" }, cfg, now), cmd);
-  assert.equal(pendingCommand(cmd, { statusAt: "2026-10-22T11:59:40Z" }, cfg, now), null);
-  assert.equal(pendingCommand(cmd, null, cfg, now + 4 * 60_000), null);
+  assert.equal(pendingCommand(cmd, { statusAt: "2026-10-22T11:59:55Z" }, cfg, now), null);
+  assert.equal(pendingCommand(cmd, null, cfg, now + 11_000), null);
 });
 
 test("Oslo date rolls over at local midnight", () => {
@@ -161,7 +163,29 @@ test("effectiveStatus combines status packets and trigger inference", () => {
 });
 
 test("pending command clears on a newer trigger", () => {
-  const cmd = { action: "open", sentAt: "2026-10-22T11:59:30Z" };
+  const cmd = { action: "open", sentAt: "2026-10-22T11:59:50Z" };
   assert.deepEqual(pendingCommand(cmd, null, cfg, now, "2026-10-22T11:59:00Z"), cmd);
-  assert.equal(pendingCommand(cmd, null, cfg, now, "2026-10-22T11:59:32Z"), null);
+  assert.equal(pendingCommand(cmd, null, cfg, now, "2026-10-22T11:59:52Z"), null);
+});
+
+// The 4.11 21:31 case: Lukk sent, no reaction for minutes.
+test("unansweredCommand: after 20 s without reaction, for up to 10 min", () => {
+  const cmd = { action: "close", sentAt: "2026-10-22T11:59:30Z" };
+  assert.equal(unansweredCommand(cmd, null, cfg, Date.parse("2026-10-22T11:59:45Z")), null); // still pending
+  assert.deepEqual(unansweredCommand(cmd, { statusAt: "2026-10-22T11:59:00Z" }, cfg, now), cmd);
+  assert.equal(unansweredCommand(cmd, { statusAt: "2026-10-22T11:59:40Z" }, cfg, now), null); // reacted
+  assert.equal(unansweredCommand(cmd, null, cfg, now, "2026-10-22T11:59:33Z"), null); // reacted
+  assert.equal(unansweredCommand(cmd, null, cfg, now + 11 * 60_000), null); // too old
+  assert.equal(unansweredCommand(null, null, cfg, now), null);
+});
+
+test("parseDownlinkEvent reads TTN downlink webhook messages", () => {
+  const ids = { end_device_ids: { device_id: "garasjeport-node" }, received_at: "2026-11-04T20:31:07Z" };
+  assert.deepEqual(parseDownlinkEvent({ ...ids, downlink_sent: { f_port: 1, frm_payload: "BQEQA+g=" } }, "garasjeport-node"),
+    { event: "sent", at: "2026-11-04T20:31:07Z", fPort: 1, error: null });
+  assert.deepEqual(parseDownlinkEvent({ ...ids, downlink_queued: { f_port: 1 } }, "garasjeport-node").event, "queued");
+  const failed = parseDownlinkEvent({ ...ids, downlink_failed: { downlink: { f_port: 1 }, error: { namespace: "pkg/gatewayserver", name: "schedule" } } }, "garasjeport-node");
+  assert.deepEqual([failed.event, failed.fPort, failed.error], ["failed", 1, "pkg/gatewayserver:schedule"]);
+  assert.equal(parseDownlinkEvent({ ...ids, uplink_message: {} }, "garasjeport-node"), null);
+  assert.equal(parseDownlinkEvent({ ...ids, downlink_sent: {} }, "other"), null);
 });

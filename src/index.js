@@ -1,4 +1,4 @@
-import { parseUplink, safeEqual } from "./logic.js";
+import { parseDownlinkEvent, parseUplink, safeEqual } from "./logic.js";
 
 export { GarageState } from "./garage.js";
 
@@ -10,6 +10,9 @@ export default {
     try {
       if (url.pathname === "/ttn/uplink" && request.method === "POST") {
         return await handleUplink(request, env);
+      }
+      if (url.pathname === "/ttn/downlink" && request.method === "POST") {
+        return await handleDownlinkEvent(request, env);
       }
       if (url.pathname.startsWith("/api/")) {
         return await handleApi(request, env, url.pathname);
@@ -42,6 +45,16 @@ async function handleUplink(request, env) {
   const res = await garage(env, "uplink", { up });
   const { result } = await res.json();
   return new Response(result ?? "ok", { status: res.status });
+}
+
+async function handleDownlinkEvent(request, env) {
+  if (!(await safeEqual(request.headers.get("X-Webhook-Secret"), env.WEBHOOK_SECRET))) {
+    return new Response("Unauthorized", { status: 401 });
+  }
+  const ev = parseDownlinkEvent(await request.json().catch(() => null), env.TTN_DEVICE_ID);
+  if (!ev) return new Response("ignored");
+  const res = await garage(env, "downlink", { ev });
+  return new Response("ok", { status: res.status });
 }
 
 async function handleApi(request, env, path) {

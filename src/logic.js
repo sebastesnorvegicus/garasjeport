@@ -18,7 +18,10 @@ export function readConfig(env) {
     staleMs: Number(env.STALE_MINUTES || 30) * 60_000,
     pulseLimit: Number(env.PULSE_DAILY_LIMIT || 20),
     pulseIntervalMs: Number(env.PULSE_MIN_INTERVAL_SECONDS || 15) * 1000,
-    pendingTimeoutMs: 3 * 60_000,
+    // The door normally reacts within ~2.5 s. After this the app unlocks and says it got no reaction.
+    pendingTimeoutMs: 20_000,
+    unansweredShowMs: 10 * 60_000,
+    ttnTimeoutMs: 10_000,
     // A full run takes about 26 s. After this long without an end-position
     // trigger the direction is no longer trusted (the door may have been stopped).
     motionMaxMs: 60_000,
@@ -90,14 +93,51 @@ export function checkCommand(action, status, ctx, cfg) {
   return { ok: true };
 }
 
-// A command is pending until the node reports anything newer: a trigger or a status packet.
+// The node reacted to a command if it reported anything newer: a trigger or a status packet.
+function reacted(lastCommand, state, lastTriggerAt) {
+  const sentAt = Date.parse(lastCommand.sentAt);
+  return (state?.statusAt && Date.parse(state.statusAt) > sentAt)
+    || (lastTriggerAt && Date.parse(lastTriggerAt) > sentAt);
+}
+
+// A command is pending until the node reacts, for at most pendingTimeoutMs.
 export function pendingCommand(lastCommand, state, cfg, now, lastTriggerAt = null) {
   if (!lastCommand) return null;
-  const sentAt = Date.parse(lastCommand.sentAt);
-  if (now - sentAt > cfg.pendingTimeoutMs) return null;
-  if (state?.statusAt && Date.parse(state.statusAt) > sentAt) return null;
-  if (lastTriggerAt && Date.parse(lastTriggerAt) > sentAt) return null;
-  return lastCommand;
+  if (now - Date.parse(lastCommand.sentAt) > cfg.pendingTimeoutMs) return null;
+  return reacted(lastCommand, state, lastTriggerAt) ? null : lastCommand;
+}
+
+// The last command got no reaction within pendingTimeoutMs. Shown for a while so the user can retry.
+export function unansweredCommand(lastCommand, state, cfg, now, lastTriggerAt = null) {
+  if (!lastCommand) return null;
+  const age = now - Date.parse(lastCommand.sentAt);
+  if (age <= cfg.pendingTimeoutMs || age > cfg.unansweredShowMs) return null;
+  return reacted(lastCommand, state, lastTriggerAt) ? null : lastCommand;
+}
+
+const DOWNLINK_EVENTS = {
+  downlink_queued: "queued",
+  downlink_sent: "sent",
+  downlink_failed: "failed",
+  downlink_ack: "ack",
+  downlink_nack: "nack",
+  downlink_queue_invalidated: "invalidated",
+};
+
+// TTN webhook messages about our downlinks: whether a pulse was queued, sent by a gateway, or failed.
+export function parseDownlinkEvent(body, deviceId) {
+  if (body?.end_device_ids?.device_id !== deviceId) return null;
+  const key = Object.keys(DOWNLINK_EVENTS).find((k) => body[k]);
+  if (!key) return null;
+  const msg = body[key];
+  const down = msg.downlink ?? msg;
+  const err = msg.error;
+  return {
+    event: DOWNLINK_EVENTS[key],
+    at: body.received_at || new Date().toISOString(),
+    fPort: down?.f_port ?? null,
+    error: err ? ([err.namespace, err.name].filter(Boolean).join(":") || err.message_format || "ukjent") : null,
+  };
 }
 
 // In MOD6 trigger packets, DIx_status "True" marks the input that caused the trigger.
