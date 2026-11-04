@@ -14,6 +14,9 @@
   --unknown: #616e7c;
   --banner-bg: #fff4d6;
   --banner-fg: #6b4e00;
+  --live-ok: #1e9e50;
+  --live-warn: #d9a400;
+  --live-bad: #d23c2c;
   color-scheme: light dark;
 }
 
@@ -34,6 +37,9 @@
     --unknown: #9aa5b1;
     --banner-bg: #3a2f10;
     --banner-fg: #f5d77a;
+    --live-ok: #4cc382;
+    --live-warn: #f0c64d;
+    --live-bad: #f0716a;
   }
 }
 
@@ -61,12 +67,12 @@ header {
 h1 { font-size: 1.5rem; margin: 0; }
 h2 { font-size: 1.1rem; margin: 24px 0 8px; }
 
-.banner {
+.warning {
   background: var(--banner-bg);
   color: var(--banner-fg);
   border-radius: 8px;
-  padding: 10px 12px;
-  font-size: 0.9rem;
+  padding: 12px 14px;
+  font-weight: 600;
 }
 
 .card {
@@ -76,7 +82,37 @@ h2 { font-size: 1.1rem; margin: 24px 0 8px; }
   border-radius: 12px;
   padding: 20px;
   margin: 16px 0;
+  position: relative;
 }
+
+/* Unconfirmed status (command sent, or inferred from a trigger): pale with dashed edge.
+   Confirmed by a status packet: full colour, solid edge. */
+.card.tentative { border-left-style: dashed; }
+.card.tentative .status-label { opacity: 0.5; }
+
+/* Liveness dot: green < 15 min since last packet, yellow < 30 min, red otherwise or offline. */
+.dot {
+  position: absolute;
+  top: 14px;
+  right: 14px;
+  width: 14px;
+  height: 14px;
+  padding: 0;
+  border: none;
+  border-radius: 50%;
+  background: var(--live-bad);
+}
+.dot::after { content: ""; position: absolute; inset: -12px; } /* larger tap target */
+.dot-ok { background: var(--live-ok); }
+.dot-warn { background: var(--live-warn); }
+.dot-bad { background: var(--live-bad); }
+.dot.blink { animation: blink 1.2s ease-out; }
+@keyframes blink {
+  0% { box-shadow: 0 0 0 0 var(--live-ok); transform: scale(1.4); }
+  100% { box-shadow: 0 0 0 14px transparent; transform: scale(1); }
+}
+
+#status-time { font-size: 0.9rem; margin-top: 4px; }
 
 .status-closed { border-left-color: var(--closed); }
 .status-open { border-left-color: var(--open); }
@@ -128,6 +164,31 @@ button.danger {
   color: var(--danger);
   border-color: var(--danger);
 }
+
+button.danger-fill {
+  background: var(--danger);
+  color: #fff;
+  border-color: var(--danger);
+  font-weight: 600;
+}
+
+details#more { margin-top: 24px; }
+details#more summary { color: var(--muted); cursor: pointer; padding: 8px 0; }
+
+dialog {
+  width: min(440px, calc(100% - 24px));
+  margin: auto auto 12px;
+  border: none;
+  border-radius: 16px;
+  padding: 0;
+  background: var(--card);
+  color: var(--fg);
+}
+dialog::backdrop { background: rgb(0 0 0 / 0.5); }
+dialog h2 { margin: 0 0 12px; font-size: 1.3rem; }
+dialog form { display: block; padding: 20px; }
+dialog .big { margin: 16px 0 4px; }
+dialog .cancel { display: block; width: 100%; padding: 12px 0; font-size: 1.05rem; }
 
 button.link {
   background: none;

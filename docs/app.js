@@ -15,12 +15,17 @@
     unknown: "Ukjent",
   };
   const ACTION_LABELS = { open: "Åpne", close: "Lukk", pulse: "Manuell puls" };
-  const PENDING_LABELS = { open: "Åpner …", close: "Lukker …", pulse: "Puls sendt …" };
+  // Shown (pale) between sending a command and the node's first reaction.
+  const PENDING = { open: ["opening", "Åpner"], close: ["closing", "Lukker"], pulse: ["moving", "Puls sendt"] };
+  const LIVE_OK_MS = 15 * 60_000; // the node reports every ~10 min
+  const LIVE_WARN_MS = 30 * 60_000;
 
   const $ = (id) => document.getElementById(id);
   let clockOffset = 0;
   let last = null;
   let busy = false;
+  let offline = false;
+  let lastPacketAt = null;
 
   function getToken() {
     try { return localStorage.getItem(TOKEN_KEY); } catch { return null; }
@@ -86,15 +91,18 @@
     $("app").hidden = false;
 
     const pending = s.pendingCommand;
-    $("status-card").className = `card status-${pending ? "moving" : s.status}`;
-    $("status-label").textContent = pending ? PENDING_LABELS[pending.action] : (LABELS[s.status] || s.status);
-    $("status-time").textContent = pending
-      ? `Kommando sendt kl. ${clock(pending.sentAt)}, venter på at porten reagerer`
-      : s.statusConfirmed === false
-        ? "Foreløpig, bekreftes av neste statusmelding om noen sekunder"
-        : s.updatedAt
-          ? `Siste statusmelding ${ago(s.updatedAt)} (${clock(s.updatedAt)})`
-          : "Ingen statusmelding mottatt ennå";
+    const [cls, label] = pending ? PENDING[pending.action] : [s.status, LABELS[s.status] || s.status];
+    const tentative = !!pending || s.statusConfirmed === false;
+    $("status-card").className = `card status-${cls}${tentative ? " tentative" : ""}`;
+    $("status-label").textContent = label;
+    $("status-card").title = tentative ? "Foreløpig, venter på bekreftelse fra porten" : "";
+
+    // Any packet from the node (status or trigger) shows that the system is alive.
+    const packetAt = [s.updatedAt, s.lastTriggerAt].filter(Boolean).sort().pop() ?? null;
+    if (lastPacketAt && packetAt && packetAt > lastPacketAt) blinkDot();
+    lastPacketAt = packetAt;
+    renderDot();
+    $("last-seen").textContent = packetAt ? `${clock(packetAt)} (${ago(packetAt)})` : "–";
 
     let notice = "";
     if (pending) {
@@ -163,6 +171,33 @@
     }
   }
 
+  function renderDot() {
+    const age = lastPacketAt ? serverNow() - Date.parse(lastPacketAt) : Infinity;
+    const level = offline || age > LIVE_WARN_MS ? "bad" : age > LIVE_OK_MS ? "warn" : "ok";
+    const dot = $("live-dot");
+    dot.classList.remove("dot-ok", "dot-warn", "dot-bad");
+    dot.classList.add(`dot-${level}`);
+    dot.setAttribute("aria-label", offline ? "Ingen kontakt med Workeren"
+      : lastPacketAt ? `Siste melding fra porten ${ago(lastPacketAt)}` : "Ingen melding fra porten");
+  }
+
+  function blinkDot() {
+    const dot = $("live-dot");
+    dot.classList.remove("blink");
+    void dot.offsetWidth; // restart the animation
+    dot.classList.add("blink");
+  }
+
+  let timeTimer;
+  function showTime() {
+    const el = $("status-time");
+    el.textContent = offline ? "Ingen kontakt med Workeren"
+      : lastPacketAt ? `Siste melding ${clock(lastPacketAt)} (${ago(lastPacketAt)})` : "Ingen melding fra porten ennå";
+    el.hidden = false;
+    clearTimeout(timeTimer);
+    timeTimer = setTimeout(() => { el.hidden = true; }, 4000);
+  }
+
   async function refresh() {
     if (!memToken) return showLogin();
     try {
@@ -170,12 +205,15 @@
       clockOffset = Date.parse(s.serverTime) - Date.now();
       if (last?.updatedAt !== s.updatedAt || last?.status !== s.status
         || !!last?.pendingCommand !== !!s.pendingCommand) loadHistory();
+      offline = false;
       render(s);
       if ($("message").dataset.network) { showMessage(""); delete $("message").dataset.network; }
     } catch (err) {
       if (err instanceof AuthError) return showLogin("Tokenet ble avvist. Prøv igjen.");
       showMessage("Får ikke kontakt med Workeren. Prøver igjen …");
       $("message").dataset.network = "1";
+      offline = true;
+      renderDot();
     }
   }
 
@@ -188,11 +226,7 @@
   async function sendCommand(action) {
     const s = last;
     if (!s) return;
-    const path = "Sjekk at porten har fri bane (ingen fotocelle er montert).";
-    const question = action === "pulse"
-      ? `Status er «${LABELS[s.status]}». En manuell puls kan åpne, lukke eller stoppe porten, avhengig av hvor den er i sekvensen.\n\n${path}\n\nSende puls likevel?`
-      : `Er du sikker på at du vil ${action === "open" ? "åpne" : "lukke"} porten?\n\n${path}`;
-    if (!confirm(question)) return;
+    if (!(await askConfirm(action, s))) return;
 
     busy = true;
     render(s);
@@ -207,6 +241,34 @@
     }
     await refresh();
   }
+
+  // Confirmation sheet with the safety warning. Resolves true only for the action button.
+  function askConfirm(action, s) {
+    const dlg = $("confirm");
+    const text = {
+      open: ["Åpne porten?", "Åpne porten"],
+      close: ["Lukke porten?", "Lukk porten"],
+      pulse: ["Sende manuell puls?", "Send puls"],
+    }[action];
+    $("confirm-title").textContent = text[0];
+    $("confirm-ok").textContent = text[1];
+    $("confirm-ok").className = `big ${action === "pulse" ? "danger-fill" : "primary"}`;
+    $("confirm-extra").textContent = action === "pulse"
+      ? `Status er «${LABELS[s.status] || s.status}». Pulsen kan åpne, lukke eller stoppe porten, avhengig av hvor den er i sekvensen.`
+      : "";
+    $("confirm-extra").hidden = action !== "pulse";
+    dlg.returnValue = "";
+    return new Promise((resolve) => {
+      dlg.addEventListener("close", () => resolve(dlg.returnValue === "ok"), { once: true });
+      dlg.showModal();
+      $("confirm-ok").focus();
+    });
+  }
+  // Tapping the dimmed background cancels.
+  $("confirm").addEventListener("click", (e) => {
+    if (e.target === $("confirm")) $("confirm").close("cancel");
+  });
+  $("live-dot").addEventListener("click", showTime);
 
   $("login-form").addEventListener("submit", (e) => {
     e.preventDefault();
@@ -237,4 +299,5 @@
 
   refresh();
   setTimeout(poll, POLL_MS);
+  setInterval(() => { if (last) renderDot(); }, 30_000);
 })();

@@ -210,8 +210,11 @@ git push
 
 - **Statuspakker** (MOD1, `Work_mode = 2ACI+2AVI`) er fasit for status.
 - **Trigger-pakker** (MOD6, `Exit mode`) kommer ca. 7 s før statuspakken. I dem betyr `DIx_status = True` hvilken bryter som utløste triggeren (ikke bryterverdien). Sammen med statusen før gir det: *Lukket* + lukket-bryter → **Åpner**, *Åpen* + åpen-bryter → **Lukker**, og under kjøring → **Åpen**/**Lukket**. Slik status vises som «Foreløpig» til statuspakken bekrefter eller retter den. Retningen glemmes etter 60 s uten ny trigger, eller hvis det sendes en ny puls underveis (porten kan ha stoppet).
-- **Én knapp:** *Åpne* når porten er lukket, *Lukk* når den er åpen. I alle andre tilstander blir den *Send manuell puls …* med en ekstra advarsel.
-- Alt krever bekreftelse. Etter sendt puls viser appen straks «Åpner …»/«Lukker …» til porten reagerer (normalt ca. 2 s). Mens noe skjer, oppdateres appen hvert 2. sekund, ellers hvert 5.
+- **Én knapp:** *Åpne* når porten er lukket, *Lukk* når den er åpen. I alle andre tilstander blir den *Send manuell puls …*.
+- Alt krever bekreftelse i et eget vindu med advarselen om fri bane (ingen fotocelle).
+- **Foreløpig status** (kommando sendt, eller tolket fra trigger) vises blek med stiplet kant. **Bekreftet** status (fra statuspakke) vises i full farge med heltrukken kant.
+- **Prikken** i statuskortet viser om systemet lever: grønn = melding fra noden siste 15 min, gul = 15–30 min, rød = over 30 min eller ingen kontakt med Workeren. Den blinker når en ny melding kommer, og viser klokkeslettet når du trykker på den.
+- Sensorer, signal, tellere og historikk ligger under *Detaljer*. Mens noe skjer, oppdateres appen hvert 2. sekund, ellers hvert 5.
 - Workeren teller relépulser per døgn. Ved 20 sperres kommandoer til midnatt. I tillegg vises totalt antall downlinks (relépulser + bekreftelser TTN sender for confirmed trigger-pakker), men det tallet sperrer ingenting.
 - Status- og kommandoendringer logges i historikken, sammen med alle trigger-pakker (som appen skjuler). Siste 300 oppføringer.
 

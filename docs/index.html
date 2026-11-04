@@ -14,10 +14,6 @@
       <button id="settings-btn" class="link" type="button">Innstillinger</button>
     </header>
 
-    <p class="banner">
-      Fotocelle er ikke montert. Se alltid etter at porten har fri bane før du åpner eller lukker.
-    </p>
-
     <section id="login" hidden>
       <h2>Tilgangstoken</h2>
       <p>Lim inn tilgangstokenet (APP_TOKEN). Det lagres bare i denne nettleseren.</p>
@@ -30,8 +26,9 @@
 
     <section id="app" hidden>
       <div id="status-card" class="card status-unknown">
+        <button id="live-dot" class="dot dot-bad" type="button" aria-label="Når kom siste melding?"></button>
         <div id="status-label" class="status-label">Laster …</div>
-        <div id="status-time" class="muted"></div>
+        <div id="status-time" class="muted" hidden></div>
       </div>
 
       <p id="notice" class="notice" hidden></p>
@@ -40,16 +37,30 @@
 
       <p id="message" class="error" hidden></p>
 
-      <dl class="details">
-        <dt>Sensorer</dt><dd id="sensors">–</dd>
-        <dt>Signal</dt><dd id="signal">–</dd>
-        <dt>Relépulser i dag</dt><dd id="budget">–</dd>
-        <dt>Downlinks i dag (inkl. ACK)</dt><dd id="downlinks">–</dd>
-      </dl>
+      <details id="more">
+        <summary>Detaljer</summary>
+        <dl class="details">
+          <dt>Siste melding</dt><dd id="last-seen">–</dd>
+          <dt>Sensorer</dt><dd id="sensors">–</dd>
+          <dt>Signal</dt><dd id="signal">–</dd>
+          <dt>Relépulser i dag</dt><dd id="budget">–</dd>
+          <dt>Downlinks i dag (inkl. ACK)</dt><dd id="downlinks">–</dd>
+        </dl>
 
-      <h2>Historikk</h2>
-      <ol id="history" class="history"></ol>
+        <h2>Historikk</h2>
+        <ol id="history" class="history"></ol>
+      </details>
     </section>
+
+    <dialog id="confirm">
+      <form method="dialog">
+        <h2 id="confirm-title"></h2>
+        <p class="warning">⚠ Se etter at porten har fri bane. Det er ingen fotocelle som stopper den.</p>
+        <p id="confirm-extra" hidden></p>
+        <button id="confirm-ok" value="ok" class="primary big"></button>
+        <button value="cancel" class="link cancel" formnovalidate>Avbryt</button>
+      </form>
+    </dialog>
   </main>
 
   <script src="config.js"></script>
