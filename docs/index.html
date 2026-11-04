@@ -27,8 +27,30 @@
     <section id="app" hidden>
       <div id="status-card" class="card status-unknown">
         <button id="live-dot" class="dot dot-bad" type="button" aria-label="Når kom siste melding?"></button>
-        <div id="status-label" class="status-label">Laster …</div>
-        <div id="status-time" class="muted" hidden></div>
+        <svg class="garage" viewBox="0 0 120 100" aria-hidden="true">
+          <defs>
+            <clipPath id="opening"><rect x="28" y="48" width="64" height="48"/></clipPath>
+          </defs>
+          <polygon class="roof" points="8,40 60,8 112,40"/>
+          <rect class="wall" x="16" y="38" width="88" height="58"/>
+          <rect class="inside" x="28" y="48" width="64" height="48"/>
+          <g clip-path="url(#opening)">
+            <g class="door">
+              <rect class="panel" x="28" y="48" width="64" height="48"/>
+              <line x1="28" y1="60" x2="92" y2="60"/>
+              <line x1="28" y1="72" x2="92" y2="72"/>
+              <line x1="28" y1="84" x2="92" y2="84"/>
+              <rect class="handle" x="54" y="89" width="12" height="3" rx="1"/>
+            </g>
+          </g>
+          <rect class="frame" x="28" y="48" width="64" height="48"/>
+          <line class="ground" x1="2" y1="96" x2="118" y2="96"/>
+          <text class="mark" x="60" y="80">?</text>
+        </svg>
+        <div>
+          <div id="status-label" class="status-label">Laster …</div>
+          <div id="status-time" class="muted" hidden></div>
+        </div>
       </div>
 
       <p id="notice" class="notice" hidden></p>

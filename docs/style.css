@@ -114,6 +114,42 @@ h2 { font-size: 1.1rem; margin: 24px 0 8px; }
 
 #status-time { font-size: 0.9rem; margin-top: 4px; }
 
+/* Garage illustration. The door scales from its top edge: 1 = closed, 0.12 = open.
+   During Åpner/Lukker it slides over about the time a real run takes (~20 s). */
+#status-card { display: flex; align-items: center; gap: 18px; }
+.garage { width: 96px; height: 80px; flex: none; }
+.garage .roof { fill: none; stroke: var(--muted); stroke-width: 3; stroke-linejoin: round; }
+.garage .wall { fill: var(--bg); stroke: var(--muted); stroke-width: 2; }
+.garage .inside { fill: #2b3138; }
+.garage .frame { fill: none; stroke: var(--muted); stroke-width: 2; }
+.garage .ground { stroke: var(--muted); stroke-width: 2; stroke-linecap: round; }
+.garage .panel { fill: var(--card); stroke: var(--door-edge); stroke-width: 2; }
+.garage .door line { stroke: var(--door-edge); stroke-width: 1.5; }
+.garage .handle { fill: var(--door-edge); }
+.garage .mark { display: none; font: 700 30px system-ui, sans-serif; text-anchor: middle; fill: var(--unknown); }
+.garage .door {
+  --door-edge: var(--muted);
+  transform-box: view-box;
+  transform-origin: 60px 48px;
+  transform: scaleY(1);
+  transition: transform 0.6s ease;
+}
+.status-closed .garage .door { --door-edge: var(--closed); }
+.status-open .garage .door { --door-edge: var(--open); transform: scaleY(0.12); }
+.status-opening .garage .door, .status-closing .garage .door, .status-moving .garage .door { --door-edge: var(--moving); }
+.status-opening .garage .door { animation: door-up 20s linear forwards; }
+.status-closing .garage .door { animation: door-down 20s linear forwards; }
+.status-moving .garage .door { transform: scaleY(0.5); }
+.status-error .garage .door { --door-edge: var(--error); }
+.status-unknown .garage .door { opacity: 0.25; }
+.status-unknown .garage .mark, .status-error .garage .mark { display: block; }
+.status-error .garage .mark { fill: var(--error); }
+@keyframes door-up { from { transform: scaleY(1); } to { transform: scaleY(0.12); } }
+@keyframes door-down { from { transform: scaleY(0.12); } to { transform: scaleY(1); } }
+@media (prefers-reduced-motion: reduce) {
+  .status-opening .garage .door, .status-closing .garage .door { animation: none; transform: scaleY(0.5); }
+}
+
 .status-closed { border-left-color: var(--closed); }
 .status-open { border-left-color: var(--open); }
 .status-moving, .status-opening, .status-closing { border-left-color: var(--moving); }
