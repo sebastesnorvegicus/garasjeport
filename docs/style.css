@@ -114,40 +114,45 @@ h2 { font-size: 1.1rem; margin: 24px 0 8px; }
 
 #status-time { font-size: 0.9rem; margin-top: 4px; }
 
-/* Garage illustration. The door scales from its top edge: 1 = closed, 0.12 = open.
-   During Åpner/Lukker it slides over about the time a real run takes (~20 s). */
+/* Garage illustration: a double garage seen from the long side, dark grey with a white door.
+   The door is a stack of sections that slides straight up, so the joints keep their spacing.
+   Only at the top, where sections turn into the ceiling track, the joints are drawn closer (.curve).
+   During Åpner/Lukker it moves over about the time a real run takes (~20 s).
+   The frame around the door shows the status colour. */
 #status-card { display: flex; align-items: center; gap: 18px; }
-.garage { width: 96px; height: 80px; flex: none; }
-.garage .roof { fill: none; stroke: var(--muted); stroke-width: 3; stroke-linejoin: round; }
-.garage .wall { fill: var(--bg); stroke: var(--muted); stroke-width: 2; }
-.garage .inside { fill: #2b3138; }
-.garage .frame { fill: none; stroke: var(--muted); stroke-width: 2; }
+.garage { width: 120px; height: 75px; flex: none; }
+.garage .roof { fill: #2b2f34; }
+.garage .fascia { fill: #3a3f45; }
+.garage .wall { fill: #4a5057; }
+.garage .board { stroke: #42474d; stroke-width: 1; }
+.garage .inside { fill: #15181b; }
 .garage .ground { stroke: var(--muted); stroke-width: 2; stroke-linecap: round; }
-.garage .panel { fill: var(--card); stroke: var(--door-edge); stroke-width: 2; }
-.garage .door line { stroke: var(--door-edge); stroke-width: 1.5; }
-.garage .handle { fill: var(--door-edge); }
+.garage .panel { fill: #f7f8f9; }
+.garage .joint { stroke: #b9c0c7; stroke-width: 1; }
+.garage .handle { fill: #9aa3ab; }
+.garage .curve { opacity: 0; transition: opacity 0.4s; }
+.garage .curve rect { fill: #e9ecef; }
+.garage .curve line { stroke: #b9c0c7; stroke-width: 0.8; }
+.garage .frame { fill: none; stroke: var(--frame, #6b7278); stroke-width: 2.5; }
 .garage .mark { display: none; font: 700 30px system-ui, sans-serif; text-anchor: middle; fill: var(--unknown); }
-.garage .door {
-  --door-edge: var(--muted);
-  transform-box: view-box;
-  transform-origin: 60px 48px;
-  transform: scaleY(1);
-  transition: transform 0.6s ease;
-}
-.status-closed .garage .door { --door-edge: var(--closed); }
-.status-open .garage .door { --door-edge: var(--open); transform: scaleY(0.12); }
-.status-opening .garage .door, .status-closing .garage .door, .status-moving .garage .door { --door-edge: var(--moving); }
+.garage .door { transform: translateY(0); transition: transform 0.6s ease; }
+.status-open .garage .door { transform: translateY(-40px); }
+.status-moving .garage .door { transform: translateY(-20px); }
 .status-opening .garage .door { animation: door-up 20s linear forwards; }
 .status-closing .garage .door { animation: door-down 20s linear forwards; }
-.status-moving .garage .door { transform: scaleY(0.5); }
-.status-error .garage .door { --door-edge: var(--error); }
-.status-unknown .garage .door { opacity: 0.25; }
+.status-open .garage .curve, .status-opening .garage .curve,
+.status-closing .garage .curve, .status-moving .garage .curve { opacity: 1; }
+.status-closed .garage { --frame: var(--closed); }
+.status-open .garage { --frame: var(--open); }
+.status-opening .garage, .status-closing .garage, .status-moving .garage { --frame: var(--moving); }
+.status-error .garage { --frame: var(--error); }
+.status-unknown .garage .door, .status-error .garage .door { opacity: 0.3; }
 .status-unknown .garage .mark, .status-error .garage .mark { display: block; }
 .status-error .garage .mark { fill: var(--error); }
-@keyframes door-up { from { transform: scaleY(1); } to { transform: scaleY(0.12); } }
-@keyframes door-down { from { transform: scaleY(0.12); } to { transform: scaleY(1); } }
+@keyframes door-up { from { transform: translateY(0); } to { transform: translateY(-40px); } }
+@keyframes door-down { from { transform: translateY(-40px); } to { transform: translateY(0); } }
 @media (prefers-reduced-motion: reduce) {
-  .status-opening .garage .door, .status-closing .garage .door { animation: none; transform: scaleY(0.5); }
+  .status-opening .garage .door, .status-closing .garage .door { animation: none; transform: translateY(-20px); }
 }
 
 .status-closed { border-left-color: var(--closed); }

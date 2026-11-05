@@ -5,7 +5,8 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="theme-color" content="#1f2933">
   <title>Garasjeport</title>
-  <link rel="stylesheet" href="style.css">
+  <!-- Versjonsnummeret (?v=) tvinger nettleseren til å hente nye filer. Øk det ved hver endring i docs/. -->
+  <link rel="stylesheet" href="style.css?v=2026-11-05">
 </head>
 <body>
   <main>
@@ -27,25 +28,35 @@
     <section id="app" hidden>
       <div id="status-card" class="card status-unknown">
         <button id="live-dot" class="dot dot-bad" type="button" aria-label="Når kom siste melding?"></button>
-        <svg class="garage" viewBox="0 0 120 100" aria-hidden="true">
+        <svg class="garage" viewBox="0 0 160 100" aria-hidden="true">
           <defs>
-            <clipPath id="opening"><rect x="28" y="48" width="64" height="48"/></clipPath>
+            <clipPath id="opening"><rect x="20" y="50" width="120" height="46"/></clipPath>
           </defs>
-          <polygon class="roof" points="8,40 60,8 112,40"/>
-          <rect class="wall" x="16" y="38" width="88" height="58"/>
-          <rect class="inside" x="28" y="48" width="64" height="48"/>
+          <polygon class="roof" points="2,40 158,40 148,14 12,14"/>
+          <rect class="fascia" x="2" y="38" width="156" height="3"/>
+          <rect class="wall" x="8" y="41" width="144" height="55"/>
+          <g class="board">
+            <line x1="14" y1="41" x2="14" y2="96"/>
+            <line x1="146" y1="41" x2="146" y2="96"/>
+          </g>
+          <rect class="inside" x="20" y="50" width="120" height="46"/>
           <g clip-path="url(#opening)">
             <g class="door">
-              <rect class="panel" x="28" y="48" width="64" height="48"/>
-              <line x1="28" y1="60" x2="92" y2="60"/>
-              <line x1="28" y1="72" x2="92" y2="72"/>
-              <line x1="28" y1="84" x2="92" y2="84"/>
-              <rect class="handle" x="54" y="89" width="12" height="3" rx="1"/>
+              <rect class="panel" x="20" y="50" width="120" height="46"/>
+              <line class="joint" x1="20" y1="61.5" x2="140" y2="61.5"/>
+              <line class="joint" x1="20" y1="73" x2="140" y2="73"/>
+              <line class="joint" x1="20" y1="84.5" x2="140" y2="84.5"/>
+              <rect class="handle" x="74" y="89" width="12" height="2.5" rx="1"/>
+            </g>
+            <g class="curve">
+              <rect x="20" y="50" width="120" height="4"/>
+              <line x1="20" y1="51.2" x2="140" y2="51.2"/>
+              <line x1="20" y1="52.8" x2="140" y2="52.8"/>
             </g>
           </g>
-          <rect class="frame" x="28" y="48" width="64" height="48"/>
-          <line class="ground" x1="2" y1="96" x2="118" y2="96"/>
-          <text class="mark" x="60" y="80">?</text>
+          <rect class="frame" x="20" y="50" width="120" height="46"/>
+          <line class="ground" x1="0" y1="96" x2="160" y2="96"/>
+          <text class="mark" x="80" y="82">?</text>
         </svg>
         <div>
           <div id="status-label" class="status-label">Laster …</div>
@@ -85,7 +96,7 @@
     </dialog>
   </main>
 
-  <script src="config.js"></script>
-  <script src="app.js"></script>
+  <script src="config.js?v=2026-11-05"></script>
+  <script src="app.js?v=2026-11-05"></script>
 </body>
 </html>
