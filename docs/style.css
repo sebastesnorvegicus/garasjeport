@@ -287,3 +287,13 @@ input {
   white-space: nowrap;
   font-variant-numeric: tabular-nums;
 }
+
+/* «Jeg er i garasjen»: pause varsler til porten er lukket */
+.alerts {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin: 0 0 12px;
+}
+.alerts button { flex-shrink: 0; }

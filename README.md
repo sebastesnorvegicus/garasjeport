@@ -245,7 +245,46 @@ Får du feilen `SQLITE_CANTOPEN`, ligger prosjektmappen for dypt for Windows. Kj
 npx wrangler dev --persist-to C:\temp\garasjeport-dev
 ```
 
-## Fase 2 (ikke laget ennå)
+## Varsel når porten står åpen (ntfy)
 
-- Varsel når porten har stått åpen lenger enn X minutter: Cron Trigger i Workeren + ntfy.sh eller e-post.
+Workeren sender push-varsel til mobilen via [ntfy](https://ntfy.sh) når porten ikke er lukket. Det styres av en alarm i Durable Object-en, så ingenting kjører når porten er lukket.
+
+**Slik oppfører varslene seg for én åpning:**
+- Etter **15 min** kommer ett varsel. Halvåpen port og sensorfeil teller også som «ikke lukket».
+- Etter **60 min til** kommer én påminnelse. Så blir det stille.
+- Trykker du **«Jeg er i garasjen»** (i varselet eller i appen), kommer ingen av disse før porten er lukket. Neste åpning starter på nytt.
+- Kl. **22:00** kommer ett siste kveldsvarsel hvis porten fortsatt ikke er lukket, også når varsler er pauset.
+- Når porten lukkes etter at du har fått varsel, kommer «Garasjeporten er lukket».
+- Har noden vært stille i **60 min**, kommer «Ingen kontakt med garasjeporten», og en melding når kontakten er tilbake.
+
+Tidene endres under `[vars]` i `wrangler.toml` (`ALERT_*`).
+
+### Oppsett av varsler
+
+1. Installer appen **ntfy** av Philipp Heckel fra App Store eller Google Play.
+2. Lag to nye tilfeldige strenger med kommandoen fra trinn 6 (kjør den to ganger).
+3. Bruk den første som **emnenavn**. Den bestemmer hvem som kan lese varslene, så den må være lang og hemmelig:
+   ```powershell
+   npx wrangler secret put NTFY_TOPIC
+   ```
+4. Bruk den andre som **nøkkel for pauseknappen** i varselet (den kan bare pause varsler, ikke styre porten):
+   ```powershell
+   npx wrangler secret put ALERT_ACTION_KEY
+   ```
+5. Sjekk at `WORKER_URL` og `APP_URL` i `wrangler.toml` stemmer, og publiser:
+   ```powershell
+   npx wrangler deploy
+   ```
+6. I ntfy-appen: trykk **+**, lim inn emnenavnet fra punkt 3 (server `ntfy.sh`) og abonner.
+7. Test at varsler kommer fram (bytt inn emnenavnet):
+   ```powershell
+   curl.exe -d "Test fra PC-en" https://ntfy.sh/DITT_EMNENAVN
+   ```
+
+Varslene inneholder ikke APP_TOKEN, og knappen i varselet kan ikke åpne eller lukke porten. Virker ikke «Jeg er i garasjen» direkte i varselet på iPhone, trykker du på selve varselet. Da åpnes appen, og der ligger samme knapp.
+
+Sendte varsler og pauser står i historikken i appen og i Workers Logs (`"ev":"alert"`).
+
+## Senere
+
 - Grafisk historikk over åpninger.

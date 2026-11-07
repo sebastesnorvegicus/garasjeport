@@ -40,5 +40,19 @@ STALE_MINUTES = "30"
 PULSE_DAILY_LIMIT = "20"
 PULSE_MIN_INTERVAL_SECONDS = "15"
 
+# --- Varsler via ntfy (slås på når secret NTFY_TOPIC er satt) ---
+# Adressen til denne Workeren og til appen. Brukes i knappene i varselet.
+WORKER_URL = "https://garasjeport.hellargata.workers.dev"
+APP_URL = "https://sebastesnorvegicus.github.io/garasjeport/"
+# Første varsel når porten har stått åpen så mange minutter
+ALERT_OPEN_MINUTES = "15"
+# Én påminnelse så mange minutter etter første varsel (hvis ikke «Jeg er i garasjen»)
+ALERT_REMINDER_MINUTES = "60"
+# Siste sjekk om kvelden (norsk tid), også når varsler er pauset. Tom streng = av.
+ALERT_EVENING = "22:00"
+# Varsel hvis noden har vært stille så lenge
+ALERT_STALE_MINUTES = "60"
+
 # Hemmeligheter settes med «npx wrangler secret put <NAVN>», aldri her:
 #   TTN_API_KEY, WEBHOOK_SECRET, APP_TOKEN
+#   NTFY_TOPIC (langt tilfeldig emnenavn), ALERT_ACTION_KEY (nøkkel for pauseknappen i varselet)

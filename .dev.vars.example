@@ -4,3 +4,6 @@ TTN_API_KEY=lokal-test-ikke-ekte
 WEBHOOK_SECRET=lokal-webhook-hemmelighet
 APP_TOKEN=lokal-app-token
 ALLOWED_ORIGIN=http://localhost:8080
+# Varsler (valgfritt lokalt). Uten NTFY_TOPIC er varsler av.
+# NTFY_TOPIC=garasje-lokal-test-abc123
+# ALERT_ACTION_KEY=lokal-pause-nokkel

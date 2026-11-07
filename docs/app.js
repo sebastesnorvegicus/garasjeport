@@ -15,6 +15,14 @@
     error: "Feil (sensor)",
     unknown: "Ukjent",
   };
+  const ALERT_LABELS = {
+    open: "porten står åpen",
+    reminder: "påminnelse",
+    evening: "kveldsvarsel",
+    closed: "porten er lukket",
+    stale: "ingen kontakt",
+    contact: "kontakt igjen",
+  };
   const ACTION_LABELS = { open: "Åpne", close: "Lukk", pulse: "Manuell puls" };
   // Shown (pale) between sending a command and the node's first reaction.
   const PENDING = { open: ["opening", "Åpner"], close: ["closing", "Lukker"], pulse: ["moving", "Puls sendt"] };
@@ -170,6 +178,18 @@
     $("budget").textContent = `${s.pulsesToday} av ${s.pulseLimit}`
       + (s.pulsesToday >= s.pulseLimit ? " (oppbrukt)" : "");
     $("downlinks").textContent = String(s.downlinksToday);
+
+    // Varsler: pauseknapp når porten ikke er lukket.
+    const showAlerts = s.alertsEnabled && !!s.openSince && s.status !== "closed";
+    $("alerts-box").hidden = !showAlerts;
+    if (showAlerts) {
+      $("alerts-text").textContent = s.alertsSnoozed
+        ? "Varsler er pauset til porten lukkes."
+        : `Åpen siden ${clock(s.openSince)}. Varsel etter en stund.`;
+      $("alerts-btn").textContent = s.alertsSnoozed ? "Slå på igjen" : "Jeg er i garasjen";
+      $("alerts-btn").dataset.action = s.alertsSnoozed ? "resume" : "snooze";
+      $("alerts-btn").disabled = busy;
+    }
   }
 
   function renderHistory(items) {
@@ -191,7 +211,11 @@
       const text = document.createElement("span");
       text.textContent = h.type === "command"
         ? `Kommando: ${ACTION_LABELS[h.action] || h.action} (status før: ${LABELS[h.statusBefore] || h.statusBefore})`
-        : `Status: ${LABELS[h.status] || h.status}`;
+        : h.type === "alert"
+          ? `Varsel sendt: ${ALERT_LABELS[h.kind] || h.kind}${h.result && h.result !== "ok" ? ` (feilet: ${h.result})` : ""}`
+          : h.type === "snooze" ? "Varsler pauset («Jeg er i garasjen»)"
+            : h.type === "resume" ? "Varsler slått på igjen"
+              : `Status: ${LABELS[h.status] || h.status}`;
       li.append(time, text);
       list.append(li);
     }
@@ -310,6 +334,20 @@
     }
   });
   $("action-btn").addEventListener("click", () => sendCommand($("action-btn").dataset.action));
+  $("alerts-btn").addEventListener("click", async () => {
+    busy = true;
+    $("alerts-btn").disabled = true;
+    try {
+      await api("/api/alerts", { method: "POST", body: JSON.stringify({ action: $("alerts-btn").dataset.action }) });
+      showMessage("");
+    } catch (err) {
+      if (err instanceof AuthError) return showLogin("Tokenet ble avvist. Prøv igjen.");
+      showMessage(err.message);
+    } finally {
+      busy = false;
+    }
+    await refresh();
+  });
 
   document.addEventListener("visibilitychange", () => {
     if (document.visibilityState === "visible") refresh();
