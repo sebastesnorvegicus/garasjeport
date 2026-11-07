@@ -202,3 +202,191 @@ export async function safeEqual(a, b) {
   for (let i = 0; i < x.length; i++) diff |= x[i] ^ y[i];
   return diff === 0;
 }
+
+// ---------------------------------------------------------------------------
+// Varsler (ntfy) når porten står åpen, og når noden har vært stille lenge.
+
+export function readAlertConfig(env) {
+  const minutes = (v, d) => (v === undefined || v === "" ? d : Number(v)) * 60_000;
+  const evening = /^(\d{1,2}):(\d{2})$/.exec(env.ALERT_EVENING ?? "22:00");
+  return {
+    enabled: !!env.NTFY_TOPIC,
+    ntfyUrl: (env.NTFY_URL || "https://ntfy.sh").replace(/\/+$/, ""),
+    topic: env.NTFY_TOPIC,
+    ntfyToken: env.NTFY_TOKEN || null,
+    actionKey: env.ALERT_ACTION_KEY || null,
+    workerUrl: (env.WORKER_URL || "").replace(/\/+$/, ""),
+    appUrl: env.APP_URL || "",
+    openMs: minutes(env.ALERT_OPEN_MINUTES, 15),
+    reminderMs: minutes(env.ALERT_REMINDER_MINUTES, 60),
+    staleMs: minutes(env.ALERT_STALE_MINUTES, 60),
+    // [time, minutt] i norsk tid, eller null hvis kveldsvarselet er slått av
+    evening: evening ? [Number(evening[1]), Number(evening[2])] : null,
+  };
+}
+
+// Minutter Oslo ligger foran UTC på tidspunktet t (60 vinter, 120 sommer).
+function osloOffsetMs(t) {
+  const name = new Intl.DateTimeFormat("en-US", { timeZone: "Europe/Oslo", timeZoneName: "shortOffset" })
+    .formatToParts(new Date(t)).find((p) => p.type === "timeZoneName").value; // "GMT+1"
+  const m = /GMT([+-]\d+)(?::(\d+))?/.exec(name);
+  return m ? (Number(m[1]) * 60 + Math.sign(Number(m[1])) * Number(m[2] || 0)) * 60_000 : 0;
+}
+
+// Første gang klokka i Oslo viser hh:mm etter tidspunktet t.
+export function nextOsloTime(t, [hh, mm]) {
+  const [y, mo, d] = osloDate(t).split("-").map(Number);
+  for (let add = 0; add < 3; add++) {
+    const guess = Date.UTC(y, mo - 1, d + add, hh, mm);
+    const at = guess - osloOffsetMs(guess);
+    if (at > t) return at;
+  }
+  return null;
+}
+
+export function osloClock(t) {
+  return new Intl.DateTimeFormat("nb-NO", { timeZone: "Europe/Oslo", hour: "2-digit", minute: "2-digit" }).format(new Date(t));
+}
+
+const NOT_CLOSED = [STATUS.OPEN, STATUS.MOVING, STATUS.OPENING, STATUS.CLOSING, STATUS.ERROR];
+
+// Bestemmer hvilke varsler som skal sendes nå, og når neste sjekk må skje.
+// alert = { openSince, firstAt, reminderAt, eveningAt, snoozedAt, staleAt, lastStatus } (ms)
+// Regler for én åpning:
+//   - første varsel etter openMs, én påminnelse reminderMs etter det, så stille
+//   - «Jeg er i garasjen» (snoozedAt) stopper disse to til porten lukkes
+//   - kveldsvarsel én gang ved første «evening» etter at porten ble åpnet, også om pauset
+//   - «lukket»-melding bare hvis det er sendt varsel om denne åpningen
+// I tillegg: varsel én gang når noden har vært stille i staleMs, og når kontakten er tilbake.
+export function planAlerts({ alert, status, lastPacketAt, now, cfg }) {
+  const a = { ...(alert ?? {}) };
+  const messages = [];
+  const stale = lastPacketAt == null || now - lastPacketAt >= cfg.staleMs;
+
+  if (stale) {
+    if (lastPacketAt != null && !a.staleAt) {
+      messages.push({ kind: "stale", lastPacketAt, lastStatus: a.lastStatus ?? null });
+      a.staleAt = now;
+    }
+  } else if (a.staleAt) {
+    messages.push({ kind: "contact", status });
+    delete a.staleAt;
+  }
+
+  if (status === STATUS.CLOSED) {
+    if (a.openSince && (a.firstAt || a.reminderAt || a.eveningAt)) {
+      messages.push({ kind: "closed", openSince: a.openSince });
+    }
+    for (const k of ["openSince", "firstAt", "reminderAt", "eveningAt", "snoozedAt"]) delete a[k];
+  } else if (NOT_CLOSED.includes(status)) {
+    a.openSince ??= now;
+    const due = [];
+    const eveningTime = cfg.evening ? nextOsloTime(a.openSince, cfg.evening) : null;
+    if (eveningTime && !a.eveningAt && now >= eveningTime && now >= a.openSince + cfg.openMs) due.push("evening");
+    if (!a.snoozedAt) {
+      if (!a.firstAt && now >= a.openSince + cfg.openMs) due.push("open");
+      else if (a.firstAt && !a.reminderAt && now >= a.firstAt + cfg.reminderMs) due.push("reminder");
+    }
+    if (due.length) {
+      // Ett varsel om gangen. Kveldsvarselet er det siste, så det tar over for de andre.
+      const kind = due[0];
+      messages.push({ kind, status, openSince: a.openSince, eveningTime: kind === "evening" ? null : eveningTime });
+      if (due.includes("evening")) a.eveningAt = now;
+      if (due.includes("open")) a.firstAt = now;
+      if (due.includes("reminder")) a.reminderAt = now;
+      // Etter kveldsvarselet kommer ingen flere varsler om denne åpningen.
+      if (kind === "evening") { a.firstAt ??= now; a.reminderAt ??= now; }
+    }
+  }
+  // Ukjent status (ingen fersk melding): ingen åpen-varsler. Stillhets-varselet dekker det.
+
+  if (status !== STATUS.UNKNOWN) a.lastStatus = status;
+
+  // Neste tidspunkt noe kan bli aktuelt.
+  const next = [];
+  if (lastPacketAt != null && !a.staleAt) next.push(lastPacketAt + cfg.staleMs);
+  if (a.openSince) {
+    if (!a.snoozedAt && !a.firstAt) next.push(a.openSince + cfg.openMs);
+    if (!a.snoozedAt && a.firstAt && !a.reminderAt) next.push(a.firstAt + cfg.reminderMs);
+    if (cfg.evening && !a.eveningAt) {
+      const ev = nextOsloTime(a.openSince, cfg.evening);
+      if (ev) next.push(Math.max(ev, a.openSince + cfg.openMs));
+    }
+  }
+  const nextAt = next.length ? Math.max(Math.min(...next), now + 1000) : null;
+  return { alert: a, messages, nextAt };
+}
+
+const DOOR_TEXT = {
+  open: "står åpen",
+  moving: "er ikke helt lukket",
+  opening: "er ikke helt lukket",
+  closing: "er ikke helt lukket",
+  error: "melder sensorfeil (ikke lukket?)",
+};
+const STATUS_TEXT = {
+  closed: "Lukket", open: "Åpen", moving: "Halvåpen / stoppet", opening: "Åpner", closing: "Lukker",
+  error: "Sensorfeil", unknown: "Ukjent",
+};
+
+// Lager ntfy-meldingen (JSON-publisering) for ett varsel.
+export function ntfyMessage(msg, cfg, now) {
+  const since = msg.openSince ? `Åpen siden kl. ${osloClock(msg.openSince)} (${Math.round((now - msg.openSince) / 60_000)} min).` : "";
+  const door = DOOR_TEXT[msg.status] ?? "står åpen";
+  let title, message, priority = 4, tags = ["warning"], snooze = false;
+  switch (msg.kind) {
+    case "open":
+      title = `Garasjeporten ${door}`;
+      message = `${since} Trykk «Jeg er i garasjen» for å slippe flere varsler til den er lukket.`;
+      snooze = true;
+      break;
+    case "reminder":
+      title = `Garasjeporten ${door} fortsatt`;
+      message = `${since} Siste påminnelse` + (msg.eveningTime ? `, bortsett fra én sjekk kl. ${osloClock(msg.eveningTime)}.` : ".");
+      snooze = true;
+      break;
+    case "evening":
+      title = `Garasjeporten ${door} i kveld`;
+      message = `${since} Ingen flere varsler før den er lukket.`;
+      priority = 5;
+      break;
+    case "closed":
+      title = "Garasjeporten er lukket";
+      message = `Den var åpen fra kl. ${osloClock(msg.openSince)}.`;
+      priority = 2;
+      tags = ["white_check_mark"];
+      break;
+    case "stale":
+      title = "Ingen kontakt med garasjeporten";
+      message = `Siste melding fra noden kom kl. ${osloClock(msg.lastPacketAt)}.`
+        + (msg.lastStatus ? ` Siste kjente status: ${STATUS_TEXT[msg.lastStatus] ?? msg.lastStatus}.` : "");
+      tags = ["satellite"];
+      break;
+    case "contact":
+      title = "Kontakt med garasjeporten igjen";
+      message = `Status: ${STATUS_TEXT[msg.status] ?? msg.status}.`;
+      priority = 2;
+      tags = ["white_check_mark"];
+      break;
+    default:
+      return null;
+  }
+  const body = { topic: cfg.topic, title, message, priority, tags };
+  if (cfg.appUrl) body.click = cfg.appUrl;
+  const actions = [];
+  if (snooze && cfg.workerUrl && cfg.actionKey) {
+    actions.push({
+      action: "http",
+      label: "Jeg er i garasjen",
+      url: `${cfg.workerUrl}/alert/snooze`,
+      method: "POST",
+      headers: { Authorization: `Bearer ${cfg.actionKey}` },
+      clear: true,
+    });
+  }
+  if (cfg.appUrl && msg.kind !== "closed" && msg.kind !== "contact") {
+    actions.push({ action: "view", label: "Åpne appen", url: cfg.appUrl });
+  }
+  if (actions.length) body.actions = actions;
+  return body;
+}

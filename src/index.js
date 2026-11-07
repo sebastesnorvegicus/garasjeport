@@ -14,6 +14,9 @@ export default {
       if (url.pathname === "/ttn/downlink" && request.method === "POST") {
         return await handleDownlinkEvent(request, env);
       }
+      if (url.pathname === "/alert/snooze" && request.method === "POST") {
+        return await handleAlertAction(request, env);
+      }
       if (url.pathname.startsWith("/api/")) {
         return await handleApi(request, env, url.pathname);
       }
@@ -57,6 +60,15 @@ async function handleDownlinkEvent(request, env) {
   return new Response("ok", { status: res.status });
 }
 
+// Knappen «Jeg er i garasjen» i ntfy-varselet. Egen nøkkel som bare kan pause varsler.
+async function handleAlertAction(request, env) {
+  const auth = request.headers.get("Authorization") || "";
+  const key = auth.startsWith("Bearer ") ? auth.slice(7) : "";
+  if (!(await safeEqual(key, env.ALERT_ACTION_KEY))) return new Response("Unauthorized", { status: 401 });
+  const res = await garage(env, "alerts", { action: "snooze" });
+  return json(await res.json(), res.status);
+}
+
 async function handleApi(request, env, path) {
   const cors = corsHeaders(request, env);
   if (request.method === "OPTIONS") return new Response(null, { status: 204, headers: cors });
@@ -73,6 +85,9 @@ async function handleApi(request, env, path) {
   else if (path === "/api/command" && request.method === "POST") {
     const body = await request.json().catch(() => null);
     res = await garage(env, "command", { action: body?.action });
+  } else if (path === "/api/alerts" && request.method === "POST") {
+    const body = await request.json().catch(() => null);
+    res = await garage(env, "alerts", { action: body?.action });
   } else {
     return json({ error: "Ukjent API-sti." }, 404, cors);
   }

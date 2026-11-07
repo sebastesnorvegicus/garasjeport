@@ -33,6 +33,13 @@ function fakeStorage() {
     async delete(key) {
       return map.delete(key);
     },
+    alarm: null,
+    async setAlarm(t) {
+      this.alarm = t;
+    },
+    async deleteAlarm() {
+      this.alarm = null;
+    },
   };
 }
 
@@ -397,4 +404,74 @@ test("downlink webhook: secret required, events logged and exposed", async () =>
   assert.deepEqual([s.lastDownlink.event, s.lastDownlink.error], ["failed", "pkg/gs:too_late"]);
   const { history } = await (await worker.fetch(api("/api/history"), env)).json();
   assert.deepEqual(history.map((h) => `${h.type}:${h.event}`), ["downlink:failed", "downlink:queued"]);
+});
+
+test("ntfy: åpen port varsles via alarmen, pause fra varselet virker, og lukket gir melding", async () => {
+  env.NTFY_TOPIC = "garasje-test";
+  env.ALERT_ACTION_KEY = "pause-key";
+  env.WORKER_URL = W;
+  env.APP_URL = "https://dag.github.io/garasjeport/";
+  const ntfy = () => downlinkCalls.filter((c) => c.url === "https://ntfy.sh").map((c) => JSON.parse(c.init.body));
+
+  const t = Date.now();
+  await worker.fetch(uplinkRequest(statusPacket("H", "L"), { receivedAt: new Date(t).toISOString() }), env);
+  const storage = env.GARAGE_DO.storage;
+  assert.ok(Math.abs(storage.alarm - (t + 15 * 60_000)) < 1000);
+  assert.equal(ntfy().length, 0);
+
+  // Alarmen går 15 min senere. Hent instansen via en status-forespørsel og kall alarm() med falsk klokke.
+  const realNow = Date.now;
+  Date.now = () => t + 16 * 60_000;
+  try {
+    let s = await (await worker.fetch(api("/api/status"), env)).json();
+    assert.equal(s.status, "open");
+    const instance = await getInstance();
+    await instance.alarm();
+    assert.equal(ntfy().length, 1);
+    assert.equal(ntfy()[0].title, "Garasjeporten står åpen");
+
+    // Pause fra varselknappen: feil nøkkel avvises, riktig nøkkel virker
+    const bad = await worker.fetch(new Request(`${W}/alert/snooze`, { method: "POST", headers: { Authorization: "Bearer app-token" } }), env);
+    assert.equal(bad.status, 401);
+    const ok = await worker.fetch(new Request(`${W}/alert/snooze`, { method: "POST", headers: { Authorization: "Bearer pause-key" } }), env);
+    assert.equal(ok.status, 200);
+    s = await (await worker.fetch(api("/api/status"), env)).json();
+    assert.equal(s.alertsSnoozed, true);
+
+    // Påminnelsen en time senere kommer ikke
+    Date.now = () => t + 80 * 60_000;
+    await worker.fetch(uplinkRequest(statusPacket("H", "L"), { receivedAt: new Date(t + 80 * 60_000).toISOString() }), env);
+    await instance.alarm();
+    assert.equal(ntfy().length, 1);
+
+    // Lukket: «lukket»-melding, pausen nullstilles
+    await worker.fetch(uplinkRequest(statusPacket("L", "H"), { receivedAt: new Date(t + 81 * 60_000).toISOString() }), env);
+    assert.equal(ntfy().length, 2);
+    assert.equal(ntfy()[1].title, "Garasjeporten er lukket");
+    s = await (await worker.fetch(api("/api/status"), env)).json();
+    assert.equal(s.alertsSnoozed, false);
+
+    // Pause fra appen når porten er lukket gir 409
+    const res = await worker.fetch(api("/api/alerts", { method: "POST", body: { action: "snooze" } }), env);
+    assert.equal(res.status, 409);
+  } finally {
+    Date.now = realNow;
+  }
+
+  async function getInstance() {
+    // fakeNamespace oppretter én instans; GarageState.prototype brukes via en liten omvei
+    let captured;
+    const orig = GarageState.prototype.fetch;
+    GarageState.prototype.fetch = function (req) { captured = this; return orig.call(this, req); };
+    await worker.fetch(api("/api/status"), env);
+    GarageState.prototype.fetch = orig;
+    return captured;
+  }
+});
+
+test("uten NTFY_TOPIC sendes ingen varsler og ingen alarm settes", async () => {
+  await worker.fetch(uplinkRequest(statusPacket("H", "L")), env);
+  assert.equal(env.GARAGE_DO.storage.alarm, null);
+  const s = await (await worker.fetch(api("/api/status"), env)).json();
+  assert.equal(s.alertsEnabled, false);
 });

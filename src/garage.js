@@ -3,7 +3,10 @@ import {
   computeStatus,
   effectiveStatus,
   inferFromTrigger,
+  ntfyMessage,
   osloDate,
+  planAlerts,
+  readAlertConfig,
   pendingCommand,
   readConfig,
   unansweredCommand,
@@ -51,6 +54,7 @@ export class GarageState {
     if (op === "history") return reply({ history: (await this.storage.get("history")) ?? [] });
     if (op === "command") return this.command(args.action, now);
     if (op === "downlink") return this.downlink(args.ev);
+    if (op === "alerts") return this.alerts(args.action, now);
     return reply({ error: "Ukjent operasjon." }, 400);
   }
 
@@ -86,6 +90,7 @@ export class GarageState {
       await this.appendHistory({ t: up.receivedAt, type: "status", status: nextStatus, di1: up.di1, di2: up.di2 });
       await this.storage.put("loggedStatus", nextStatus);
     }
+    await this.runAlerts(Date.now());
     return reply({ result: "ok" });
   }
 
@@ -115,6 +120,7 @@ export class GarageState {
       snr: up.snr,
       ...up.raw,
     });
+    await this.runAlerts(Date.now());
     return reply({ result: "ok" });
   }
 
@@ -125,8 +131,8 @@ export class GarageState {
 
   async status(now) {
     const cfg = readConfig(this.env);
-    const { state, lastTrigger, lastCommand, inferred, lastDownlink } =
-      await this.load(["state", "lastTrigger", "lastCommand", "inferred", "lastDownlink"]);
+    const { state, lastTrigger, lastCommand, inferred, lastDownlink, alert } =
+      await this.load(["state", "lastTrigger", "lastCommand", "inferred", "lastDownlink", "alert"]);
     const counters = await this.counters(now);
     const eff = effectiveStatus(state, inferred, lastCommand, cfg, now);
     return {
@@ -147,6 +153,9 @@ export class GarageState {
       downlinksToday: counters.downlinks,
       pulsesToday: counters.pulses,
       pulseLimit: cfg.pulseLimit,
+      alertsEnabled: readAlertConfig(this.env).enabled,
+      alertsSnoozed: !!alert?.snoozedAt,
+      openSince: alert?.openSince ? new Date(alert.openSince).toISOString() : null,
       serverTime: new Date(now).toISOString(),
     };
   }
@@ -216,6 +225,64 @@ export class GarageState {
     const c = { ...(await this.counters(now)) };
     for (const [k, v] of Object.entries(add)) c[k] += v;
     await this.storage.put("counters", c);
+  }
+
+  // Cloudflare kaller denne når alarmen som runAlerts satte, går av.
+  async alarm() {
+    await this.runAlerts(Date.now());
+  }
+
+  // Sjekker om noe skal varsles, sender det, og setter alarm til neste sjekk.
+  async runAlerts(now) {
+    const acfg = readAlertConfig(this.env);
+    if (!acfg.enabled) return;
+    const cfg = readConfig(this.env);
+    const { state, inferred, lastCommand, lastTrigger, alert } =
+      await this.load(["state", "inferred", "lastCommand", "lastTrigger", "alert"]);
+    const status = effectiveStatus(state, inferred, lastCommand, cfg, now).status;
+    const packets = [state?.statusAt, lastTrigger?.receivedAt].filter(Boolean).map(Date.parse);
+    const lastPacketAt = packets.length ? Math.max(...packets) : null;
+
+    const plan = planAlerts({ alert, status, lastPacketAt, now, cfg: acfg });
+    await this.storage.put("alert", plan.alert);
+    for (const msg of plan.messages) await this.notify(msg, acfg, now);
+    if (plan.nextAt) await this.storage.setAlarm(plan.nextAt);
+    else await this.storage.deleteAlarm();
+  }
+
+  async notify(msg, acfg, now) {
+    const body = ntfyMessage(msg, acfg, now);
+    if (!body) return;
+    let result = "ok";
+    try {
+      const headers = { "Content-Type": "application/json", "User-Agent": "garasjeport-worker/1.0" };
+      if (acfg.ntfyToken) headers.Authorization = `Bearer ${acfg.ntfyToken}`;
+      const res = await fetch(acfg.ntfyUrl, {
+        method: "POST", headers, body: JSON.stringify(body), signal: AbortSignal.timeout(10_000),
+      });
+      if (!res.ok) result = `HTTP ${res.status}`;
+    } catch (err) {
+      result = String(err);
+    }
+    console.log(JSON.stringify({ ev: "alert", kind: msg.kind, result }));
+    await this.appendHistory({ t: new Date(now).toISOString(), type: "alert", kind: msg.kind, result });
+  }
+
+  // «Jeg er i garasjen» (snooze) og «Slå på igjen» (resume).
+  async alerts(action, now) {
+    if (!readAlertConfig(this.env).enabled) return reply({ error: "Varsler er ikke satt opp." }, 409);
+    if (action !== "snooze" && action !== "resume") return reply({ error: "Ukjent handling." }, 400);
+    await this.runAlerts(now); // oppdaterer openSince før vi ser på den
+    const alert = (await this.storage.get("alert")) ?? {};
+    if (!alert.openSince) {
+      return reply({ error: "Porten er lukket. Det er ingen varsler å pause.", code: "closed" }, 409);
+    }
+    if (action === "snooze") alert.snoozedAt = now;
+    else delete alert.snoozedAt;
+    await this.storage.put("alert", alert);
+    await this.appendHistory({ t: new Date(now).toISOString(), type: action });
+    await this.runAlerts(now); // ny alarmtid
+    return reply({ ok: true, alertsSnoozed: action === "snooze" });
   }
 
   async appendHistory(entry) {
